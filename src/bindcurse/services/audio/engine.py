@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import atexit
 import socket
+import struct
 import threading
 import time
 
 import numpy as np
 
 from bindcurse.config import (
+    AUDIO_MAGIC,
     CHANNELS,
     CHUNK_SAMPLES,
     CURRENT_PLATFORM,
@@ -159,6 +161,8 @@ class VirtualMicEngine:
             total_chunks = int((duration_sec * self.sample_rate) / chunk_samples)
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    # Optional handshake before stream
+                    sock.sendto(b"BINDCURSE_HELLO|1|48000|16|1|LocalTestTone", ("127.0.0.1", port))
                     for i in range(total_chunks):
                         t = (np.arange(chunk_samples) + i * chunk_samples) / float(
                             self.sample_rate
@@ -166,7 +170,8 @@ class VirtualMicEngine:
                         freq = 440.0 if i < (total_chunks // 2) else 554.37
                         wave = np.sin(2.0 * np.pi * freq * t) * 0.35
                         pcm = (wave * 32767.0).astype(PCM_DTYPE).tobytes()
-                        sock.sendto(pcm, ("127.0.0.1", port))
+                        packet = AUDIO_MAGIC + struct.pack("<I", i) + pcm
+                        sock.sendto(packet, ("127.0.0.1", port))
                         time.sleep(chunk_samples / float(self.sample_rate))
             except Exception:
                 pass

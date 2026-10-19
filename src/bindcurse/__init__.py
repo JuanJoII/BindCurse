@@ -31,8 +31,10 @@ def _print_status(resp: dict[str, object]) -> None:
         print("  Dispositivos:")
         for d in devices:
             if isinstance(d, dict):
-                estado = "TRANSMITIENDO" if d.get("active") else "INACTIVO"
-                print(f"    - {d.get('address')} [{estado}] ({d.get('packets')} pkts)")
+                estado = d.get("state") or ("TRANSMITIENDO" if d.get("active") else "INACTIVO")
+                name_str = f" [{d.get('name')}]" if d.get("name") and d.get("name") not in ("Dispositivo", "Cliente") else ""
+                lost_str = f", {d.get('lost')} perdidos" if d.get("lost") else ""
+                print(f"    - {d.get('address')}{name_str} [{estado}] ({d.get('packets')} pkts{lost_str})")
     else:
         print("  Dispositivos      : Ninguno conectado aún")
 

@@ -6,6 +6,12 @@ import sys
 APP_NAME: str = "BindCurse"
 APP_ID: str = "bindcurse"
 
+# Protocol Specifications & Handshakes
+BINDCURSE_VERSION: int = 1
+PROTOCOL_PREFIX: bytes = b"BINDCURSE_"
+AUDIO_MAGIC: bytes = b"BCPM"
+AUDIO_HEADER_SIZE: int = 8  # 4 bytes magic ('BCPM') + 4 bytes uint32 LE sequence
+
 # Audio Stream & PCM Specifications
 DEFAULT_UDP_PORT: int = 5005
 DEFAULT_CONTROL_PORT: int = 5006

@@ -188,8 +188,11 @@ class VirtualMicApp:
             "devices": [
                 {
                     "address": d.address_str,
+                    "name": d.client_name,
+                    "state": d.session_state,
                     "active": d.is_active,
                     "packets": d.packets,
+                    "lost": d.lost_packets,
                     "bytes": d.bytes_received,
                 }
                 for d in devices
@@ -519,7 +522,7 @@ class VirtualMicApp:
         for dev in devices:
             ip_tag = dev.ip.replace(".", "_")
             with dpg.table_row(parent="devices_table"):
-                dpg.add_text(dev.address_str, tag=f"dev_addr_{ip_tag}")
+                dpg.add_text(dev.display_name, tag=f"dev_addr_{ip_tag}")
                 status_str, status_color = self._device_status_label(dev)
                 dpg.add_text(status_str, tag=f"dev_status_{ip_tag}", color=status_color)
                 dpg.add_progress_bar(
@@ -532,8 +535,9 @@ class VirtualMicApp:
                     f"{dev.kbps:.0f} kbps ({dev.pps:.0f} pkt/s)",
                     tag=f"dev_rate_{ip_tag}",
                 )
+                loss_str = f", {dev.lost_packets} perd" if dev.lost_packets > 0 else ""
                 dpg.add_text(
-                    f"{format_bytes(dev.bytes_received)} ({dev.packets} pkts)",
+                    f"{format_bytes(dev.bytes_received)} ({dev.packets} pkts{loss_str})",
                     tag=f"dev_bytes_{ip_tag}",
                 )
                 ago = max(0.0, now - dev.last_seen)
@@ -550,8 +554,12 @@ class VirtualMicApp:
     def _device_status_label(dev: DeviceInfo) -> tuple[str, tuple[int, int, int, int]]:
         if dev.blocked:
             return "BLOQUEADO", (255, 95, 95, 255)
+        if dev.session_state == "DESCONECTADO":
+            return "DESCONECTADO", (160, 165, 175, 255)
         if dev.is_active:
-            return "TRANSMITIENDO", (80, 235, 135, 255)
+            if dev.packets > 0:
+                return "TRANSMITIENDO", (80, 235, 135, 255)
+            return "ENLAZADO", (100, 200, 255, 255)
         return "INACTIVO", (160, 165, 175, 255)
 
     def _update_frame(self) -> None:
@@ -600,7 +608,7 @@ class VirtualMicApp:
             for dev in devices:
                 ip_tag = dev.ip.replace(".", "_")
                 if dpg.does_item_exist(f"dev_addr_{ip_tag}"):
-                    dpg.set_value(f"dev_addr_{ip_tag}", dev.address_str)
+                    dpg.set_value(f"dev_addr_{ip_tag}", dev.display_name)
                 if dpg.does_item_exist(f"dev_status_{ip_tag}"):
                     status_str, status_color = self._device_status_label(dev)
                     dpg.set_value(f"dev_status_{ip_tag}", status_str)
@@ -617,9 +625,10 @@ class VirtualMicApp:
                         f"{dev.kbps:.0f} kbps ({dev.pps:.0f} pkt/s)",
                     )
                 if dpg.does_item_exist(f"dev_bytes_{ip_tag}"):
+                    loss_str = f", {dev.lost_packets} perd" if dev.lost_packets > 0 else ""
                     dpg.set_value(
                         f"dev_bytes_{ip_tag}",
-                        f"{format_bytes(dev.bytes_received)} ({dev.packets} pkts)",
+                        f"{format_bytes(dev.bytes_received)} ({dev.packets} pkts{loss_str})",
                     )
                 if dpg.does_item_exist(f"dev_ago_{ip_tag}"):
                     ago = max(0.0, now - dev.last_seen)

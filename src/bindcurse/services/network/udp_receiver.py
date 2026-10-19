@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import platform
 import socket
+import struct
 import threading
 import time
 from dataclasses import dataclass, field
@@ -9,11 +11,14 @@ from typing import Callable, List, Tuple
 import numpy as np
 
 from bindcurse.config import (
+    AUDIO_HEADER_SIZE,
+    AUDIO_MAGIC,
     DEFAULT_BUFFER_SIZE,
     DEFAULT_UDP_PORT,
     IS_LINUX,
     IS_WINDOWS,
     PCM_DTYPE,
+    PROTOCOL_PREFIX,
 )
 from bindcurse.services.network.os_network import (
     get_linux_ips,
@@ -26,9 +31,13 @@ from bindcurse.services.network.os_network import (
 class DeviceInfo:
     ip: str
     port: int
+    client_name: str = "Dispositivo"
+    session_state: str = "CONECTADO"  # "ENLAZADO", "TRANSMITIENDO", "DESCONECTADO"
     first_seen: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
     packets: int = 0
+    lost_packets: int = 0
+    expected_seq: int = 0
     bytes_received: int = 0
     kbps: float = 0.0
     pps: float = 0.0
@@ -40,12 +49,18 @@ class DeviceInfo:
     _window_start: float = field(default_factory=time.time)
 
     @property
+    def display_name(self) -> str:
+        if self.client_name and self.client_name not in ("Dispositivo", "Cliente"):
+            return f"{self.client_name}\n({self.ip}:{self.port})"
+        return f"{self.ip}:{self.port}"
+
+    @property
     def address_str(self) -> str:
         return f"{self.ip}:{self.port}"
 
     @property
     def is_active(self) -> bool:
-        return (time.time() - self.last_seen) < 2.0
+        return (time.time() - self.last_seen) < 2.5 and self.session_state != "DESCONECTADO"
 
 
 def get_local_ips() -> List[Tuple[str, str]]:
@@ -85,12 +100,17 @@ def get_local_ips() -> List[Tuple[str, str]]:
 
 class UDPAudioReceiver:
     """
-    Listens for raw PCM (16-bit signed little-endian, 48000Hz, mono) UDP packets
-    on `port` (default 5005), tracks connected devices, and forwards audio buffers
-    in real time to `on_audio_chunk`.
-
-    When `compute_levels` is False (background mode with GUI closed), skips all
-    NumPy float32 RMS/Peak calculations to minimize CPU and memory overhead.
+    Listens for UDP packets on `port` (default 5005).
+    Features:
+    - Protocol handshakes:
+        * BINDCURSE_DISCOVER -> BINDCURSE_HERE|<hostname>|<os>|<port>
+        * BINDCURSE_HELLO    -> BINDCURSE_ACK|<hostname>|<os>
+        * BINDCURSE_PING     -> BINDCURSE_PONG|<seq>
+        * BINDCURSE_BYE      -> Graceful disconnect
+    - Audio reception:
+        * BCPM header: b'BCPM' + uint32_LE seq + raw PCM (16-bit 48kHz mono)
+        * Raw PCM fallback (without BCPM header)
+    - Real-time device tracking, packet loss detection, and audio level metering.
     """
 
     def __init__(
@@ -114,6 +134,9 @@ class UDPAudioReceiver:
         self.last_packet_time = 0.0
         self.last_error: str | None = None
 
+        self.host_name = platform.node() or "BindCurse Host"
+        self.os_name = f"{platform.system()} {platform.release()}"
+
     def start(self) -> None:
         if self.running:
             return
@@ -121,6 +144,10 @@ class UDPAudioReceiver:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            except OSError:
+                pass
             try:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, DEFAULT_BUFFER_SIZE)
             except OSError:
@@ -169,9 +196,13 @@ class UDPAudioReceiver:
                     DeviceInfo(
                         ip=dev.ip,
                         port=dev.port,
+                        client_name=dev.client_name,
+                        session_state=dev.session_state,
                         first_seen=dev.first_seen,
                         last_seen=dev.last_seen,
                         packets=dev.packets,
+                        lost_packets=dev.lost_packets,
+                        expected_seq=dev.expected_seq,
                         bytes_received=dev.bytes_received,
                         kbps=dev.kbps,
                         pps=dev.pps,
@@ -198,12 +229,75 @@ class UDPAudioReceiver:
         removed = 0
         with self._lock:
             to_delete = [
-                ip for ip, d in self._devices.items() if (now - d.last_seen) >= 2.0
+                ip
+                for ip, d in self._devices.items()
+                if (now - d.last_seen) >= 2.0 or d.session_state == "DESCONECTADO"
             ]
             for ip in to_delete:
                 del self._devices[ip]
                 removed += 1
         return removed
+
+    def _handle_protocol_command(
+        self, data: bytes, addr: tuple[str, int], now: float, sock: socket.socket
+    ) -> None:
+        """Processes BINDCURSE_ control commands and sends corresponding handshakes."""
+        try:
+            text = data.decode("utf-8", errors="ignore").strip()
+            parts = text.split("|")
+            cmd = parts[0]
+            ip, port = addr
+
+            # 1. Discovery: BINDCURSE_DISCOVER
+            if cmd == "BINDCURSE_DISCOVER":
+                resp = f"BINDCURSE_HERE|{self.host_name}|{self.os_name}|{self.port}"
+                sock.sendto(resp.encode("utf-8"), addr)
+
+            # 2. Handshake: BINDCURSE_HELLO|<ver>|<sr>|<bits>|<ch>|<clientName>
+            elif cmd == "BINDCURSE_HELLO":
+                client_name = parts[5] if len(parts) > 5 else "Cliente"
+                with self._lock:
+                    dev = self._devices.get(ip)
+                    if dev is None:
+                        dev = DeviceInfo(
+                            ip=ip,
+                            port=port,
+                            client_name=client_name,
+                            session_state="ENLAZADO",
+                            first_seen=now,
+                            last_seen=now,
+                        )
+                        self._devices[ip] = dev
+                    else:
+                        dev.port = port
+                        dev.client_name = client_name
+                        dev.session_state = "ENLAZADO"
+                        dev.last_seen = now
+                        dev.expected_seq = 0
+
+                resp = f"BINDCURSE_ACK|{self.host_name}|{self.os_name}"
+                sock.sendto(resp.encode("utf-8"), addr)
+
+            # 3. Latency Ping: BINDCURSE_PING|<seq>
+            elif cmd == "BINDCURSE_PING":
+                seq = parts[1] if len(parts) > 1 else "0"
+                resp = f"BINDCURSE_PONG|{seq}"
+                sock.sendto(resp.encode("utf-8"), addr)
+                with self._lock:
+                    dev = self._devices.get(ip)
+                    if dev is not None:
+                        dev.last_seen = now
+
+            # 4. Disconnect: BINDCURSE_BYE
+            elif cmd == "BINDCURSE_BYE":
+                with self._lock:
+                    dev = self._devices.get(ip)
+                    if dev is not None:
+                        dev.session_state = "DESCONECTADO"
+                        dev.last_seen = now
+
+        except Exception:
+            pass
 
     def _recv_loop(self) -> None:
         sock = self._sock
@@ -223,19 +317,36 @@ class UDPAudioReceiver:
             if not data:
                 continue
 
-            valid_len = len(data) & ~1
+            now = time.time()
+            ip, port = addr[0], addr[1]
+
+            # 1. Handle Protocol Control Packets (Handshakes, Discovery, Ping)
+            if data.startswith(PROTOCOL_PREFIX):
+                self._handle_protocol_command(data, addr, now, sock)
+                continue
+
+            # 2. Extract PCM Audio payload (BCPM Header vs Raw Stream)
+            if data.startswith(AUDIO_MAGIC) and len(data) >= AUDIO_HEADER_SIZE:
+                seq = struct.unpack("<I", data[4:8])[0]
+                raw_pcm = data[AUDIO_HEADER_SIZE:]
+                has_seq = True
+            else:
+                seq = 0
+                raw_pcm = data
+                has_seq = False
+
+            # Ensure 16-bit alignment (2 bytes per sample)
+            valid_len = len(raw_pcm) & ~1
             if valid_len <= 0:
                 continue
-            if valid_len != len(data):
-                data = data[:valid_len]
+            if valid_len != len(raw_pcm):
+                raw_pcm = raw_pcm[:valid_len]
 
-            ip, port = addr[0], addr[1]
-            now = time.time()
-
+            # Audio levels calculation if GUI is active
             rms = 0.0
             peak = 0.0
             if self.compute_levels:
-                samples = np.frombuffer(data, dtype=PCM_DTYPE)
+                samples = np.frombuffer(raw_pcm, dtype=PCM_DTYPE)
                 if samples.size > 0:
                     float_samples = samples.astype(np.float32) * (1.0 / 32768.0)
                     rms = float(np.sqrt(np.mean(float_samples * float_samples)))
@@ -253,6 +364,15 @@ class UDPAudioReceiver:
                 if dev.blocked:
                     continue
 
+                # Track sequence and packet loss
+                if has_seq:
+                    if dev.expected_seq != 0 and seq != dev.expected_seq:
+                        if seq > dev.expected_seq:
+                            lost = seq - dev.expected_seq
+                            dev.lost_packets += lost
+                    dev.expected_seq = (seq + 1) & 0xFFFFFFFF
+
+                dev.session_state = "TRANSMITIENDO"
                 dev.packets += 1
                 dev.bytes_received += valid_len
                 dev._window_bytes += valid_len
@@ -278,6 +398,6 @@ class UDPAudioReceiver:
 
             if self.on_audio_chunk is not None:
                 try:
-                    self.on_audio_chunk(data, (ip, port))
+                    self.on_audio_chunk(raw_pcm, (ip, port))
                 except Exception:
                     pass
