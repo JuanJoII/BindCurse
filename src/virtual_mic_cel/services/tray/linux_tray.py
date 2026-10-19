@@ -1,95 +1,17 @@
 """
-System tray integration.
+Linux StatusNotifierItem + com.canonical.dbusmenu implementation over D-Bus with dbus-fast.
 
-- Linux (Waybar, Quickshell, KDE, etc.): native StatusNotifierItem + com.canonical.dbusmenu
-  implemented over D-Bus with `dbus-fast` (pure Python, no GTK/AppIndicator needed).
-- Windows: notification-area icon via `pystray`.
-
-NOTE: this module intentionally does NOT use `from __future__ import annotations`,
-because dbus-fast reads the D-Bus signatures from the (string) annotations.
+NOTE: This file intentionally does NOT use `from __future__ import annotations`
+because dbus-fast inspects string types for D-Bus signature generation.
 """
 
 import asyncio
 import os
-import sys
 import threading
-import time
-from dataclasses import dataclass
 from typing import Callable, Optional
 
-from virtual_mic_cel.icons import render_icon, to_argb32_bytes
-
-
-@dataclass(frozen=True)
-class TrayState:
-    mic_ready: bool
-    muted: bool
-    monitor: bool
-    active_devices: int
-    ip: str
-    port: int
-
-    @property
-    def icon_state(self) -> str:
-        if not self.mic_ready:
-            return "error"
-        if self.muted:
-            return "muted"
-        if self.active_devices > 0:
-            return "streaming"
-        return "idle"
-
-    @property
-    def status_line(self) -> str:
-        if not self.mic_ready:
-            return "Micrófono virtual no disponible"
-        if self.muted:
-            return "Micrófono silenciado"
-        if self.active_devices == 1:
-            return "1 dispositivo transmitiendo"
-        if self.active_devices > 1:
-            return f"{self.active_devices} dispositivos transmitiendo"
-        return "Esperando conexión del móvil"
-
-    @property
-    def tooltip(self) -> str:
-        mon = "  •  Monitor ON" if self.monitor else ""
-        return f"{self.status_line}{mon}\nConectar a {self.ip}:{self.port} (UDP)"
-
-
-@dataclass
-class TrayCallbacks:
-    get_state: Callable[[], TrayState]
-    show_window: Callable[[], None]
-    toggle_monitor: Callable[[], None]
-    toggle_mute: Callable[[], None]
-    quit_app: Callable[[], None]
-
-
-class TrayIcon:
-    """Common interface. `start()` never raises; if no tray is available it just stays inactive."""
-
-    def __init__(self, callbacks: TrayCallbacks) -> None:
-        self.cb = callbacks
-        self.available = False
-        self.error: Optional[str] = None
-
-    def start(self) -> None: ...
-
-    def stop(self) -> None: ...
-
-
-def create_tray(callbacks: TrayCallbacks) -> TrayIcon:
-    if sys.platform.startswith("linux"):
-        return LinuxSNITray(callbacks)
-    if sys.platform.startswith("win"):
-        return WindowsTray(callbacks)
-    return TrayIcon(callbacks)
-
-
-# ---------------------------------------------------------------------------
-# Linux: StatusNotifierItem over D-Bus
-# ---------------------------------------------------------------------------
+from virtual_mic_cel.services.tray.base import TrayCallbacks, TrayIcon, TrayState
+from virtual_mic_cel.services.tray.icons import render_icon, to_argb32_bytes
 
 # Menu item IDs
 M_ROOT, M_OPEN, M_SEP1, M_STATUS, M_ADDR, M_SEP2, M_MONITOR, M_MUTE, M_SEP3, M_QUIT = (
@@ -98,7 +20,7 @@ M_ROOT, M_OPEN, M_SEP1, M_STATUS, M_ADDR, M_SEP2, M_MONITOR, M_MUTE, M_SEP3, M_Q
 
 
 class LinuxSNITray(TrayIcon):
-    POLL_INTERVAL = 1.0  # seconds; only rebuilds/emits when something actually changed
+    POLL_INTERVAL = 1.0
 
     def __init__(self, callbacks: TrayCallbacks) -> None:
         super().__init__(callbacks)
@@ -112,7 +34,6 @@ class LinuxSNITray(TrayIcon):
         self.state: TrayState = callbacks.get_state()
         self.revision = 1
 
-    # ---- public API ----
     def start(self) -> None:
         self._thread = threading.Thread(
             target=self._thread_main, name="SNITray", daemon=True
@@ -126,16 +47,18 @@ class LinuxSNITray(TrayIcon):
         if self._thread is not None and self._thread is not threading.current_thread():
             self._thread.join(timeout=1.5)
 
-    # ---- helpers used by the D-Bus interfaces ----
     def pixmaps(self) -> list:
         st = self.state
         return [
-            [size, size, to_argb32_bytes(render_icon(st.icon_state, size, st.monitor))]
+            [
+                size,
+                size,
+                to_argb32_bytes(render_icon(st.icon_state, size, st.monitor)),
+            ]
             for size in (22, 32, 48, 64)
         ]
 
     def run_action(self, fn: Callable[[], None]) -> None:
-        # Run app callbacks off the D-Bus loop so a slow action never blocks the tray
         threading.Thread(target=self._safe_call, args=(fn,), daemon=True).start()
 
     def request_refresh(self) -> None:
@@ -152,13 +75,12 @@ class LinuxSNITray(TrayIcon):
         except Exception:
             pass
 
-    # ---- event loop ----
     def _thread_main(self) -> None:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         try:
             self._loop.run_until_complete(self._main())
-        except Exception as exc:  # no session bus, etc.
+        except Exception as exc:
             self.available = False
             self.error = str(exc)
         finally:
@@ -220,7 +142,6 @@ class LinuxSNITray(TrayIcon):
             self.error = None
 
     async def _watch_for_watcher_restarts(self) -> None:
-        """Re-register automatically when the bar (Waybar/Quickshell) restarts."""
         from dbus_fast import Message
 
         rule = (
@@ -243,7 +164,7 @@ class LinuxSNITray(TrayIcon):
                 msg.member == "NameOwnerChanged"
                 and msg.body
                 and msg.body[0] == "org.kde.StatusNotifierWatcher"
-                and msg.body[2]  # new owner appeared
+                and msg.body[2]
             ):
                 asyncio.ensure_future(self._delayed_reregister())
 
@@ -356,19 +277,17 @@ try:
         def Menu(self) -> "o":
             return "/MenuBar"
 
-        # Left click -> open the GUI
         @method()
         def Activate(self, x: "i", y: "i"):
             self.tray.run_action(self.tray.cb.show_window)
 
-        # Middle click -> toggle mute
         @method()
         def SecondaryActivate(self, x: "i", y: "i"):
             self.tray.run_action(self._toggle_mute_and_refresh)
 
         @method()
         def ContextMenu(self, x: "i", y: "i"):
-            pass  # host shows the dbusmenu itself
+            pass
 
         @method()
         def Scroll(self, delta: "i", orientation: "s"):
@@ -399,7 +318,6 @@ try:
             super().__init__("com.canonical.dbusmenu")
             self.tray = tray
 
-        # ---- menu model ----
         def _item_props(self, item_id: int) -> dict:
             st = self.tray.state
             if item_id == M_ROOT:
@@ -476,7 +394,6 @@ try:
 
             self.tray.run_action(_run)
 
-        # ---- D-Bus API ----
         @dbus_property(access=PropertyAccess.READ)
         def Version(self) -> "u":
             return 3
@@ -536,120 +453,5 @@ try:
         def ItemsPropertiesUpdated(self) -> "a(ia{sv})a(ias)":
             return [[], []]
 
-except ImportError:  # dbus-fast is only installed on Linux
+except ImportError:
     pass
-
-
-# ---------------------------------------------------------------------------
-# Windows: notification area icon via pystray
-# ---------------------------------------------------------------------------
-
-
-class WindowsTray(TrayIcon):
-    POLL_INTERVAL = 1.0
-
-    def __init__(self, callbacks: TrayCallbacks) -> None:
-        super().__init__(callbacks)
-        self._icon = None
-        self._running = False
-        self._poll_thread: Optional[threading.Thread] = None
-        self.state: TrayState = callbacks.get_state()
-
-    def start(self) -> None:
-        try:
-            import pystray
-        except Exception as exc:
-            self.error = f"pystray no disponible: {exc}"
-            return
-
-        cb = self.cb
-
-        def _do(fn: Callable[[], None]) -> Callable:
-            def _handler(icon, _item) -> None:
-                try:
-                    fn()
-                finally:
-                    self._apply_state(force=True)
-
-            return _handler
-
-        menu = pystray.Menu(
-            pystray.MenuItem("Abrir interfaz", _do(cb.show_window), default=True),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(lambda _i: self.state.status_line, None, enabled=False),
-            pystray.MenuItem(
-                lambda _i: f"IP: {self.state.ip}   Puerto UDP: {self.state.port}",
-                None,
-                enabled=False,
-            ),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                "Escuchar por la salida de audio",
-                _do(cb.toggle_monitor),
-                checked=lambda _i: self.state.monitor,
-            ),
-            pystray.MenuItem(
-                "Silenciar micrófono",
-                _do(cb.toggle_mute),
-                checked=lambda _i: self.state.muted,
-            ),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Apagar y salir", _do(cb.quit_app)),
-        )
-        st = self.state
-        self._icon = pystray.Icon(
-            "virtual_mic_cel",
-            render_icon(st.icon_state, 64, st.monitor),
-            f"Virtual Mic Cel\n{st.tooltip}"[:127],
-            menu,
-        )
-        try:
-            self._icon.run_detached()
-        except Exception as exc:
-            self.error = str(exc)
-            return
-
-        self.available = True
-        self._running = True
-        self._poll_thread = threading.Thread(
-            target=self._poll_loop, name="WinTrayPoll", daemon=True
-        )
-        self._poll_thread.start()
-
-    def _poll_loop(self) -> None:
-        while self._running:
-            time.sleep(self.POLL_INTERVAL)
-            self._apply_state(force=False)
-
-    def _apply_state(self, force: bool) -> None:
-        if self._icon is None:
-            return
-        try:
-            new_state = self.cb.get_state()
-        except Exception:
-            return
-        if not force and new_state == self.state:
-            return
-        old = self.state
-        self.state = new_state
-        try:
-            if force or (old.icon_state, old.monitor) != (
-                new_state.icon_state,
-                new_state.monitor,
-            ):
-                self._icon.icon = render_icon(
-                    new_state.icon_state, 64, new_state.monitor
-                )
-            self._icon.title = f"Virtual Mic Cel\n{new_state.tooltip}"[:127]
-            self._icon.update_menu()
-        except Exception:
-            pass
-
-    def stop(self) -> None:
-        self._running = False
-        if self._icon is not None:
-            try:
-                self._icon.stop()
-            except Exception:
-                pass
-            self._icon = None

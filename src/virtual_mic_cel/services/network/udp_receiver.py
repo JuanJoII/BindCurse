@@ -1,19 +1,25 @@
 from __future__ import annotations
 
 import socket
-import subprocess
-import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, List, Tuple
 
 import numpy as np
 
-DEFAULT_UDP_PORT = 5005
-SAMPLE_RATE = 48000
-CHANNELS = 1
-BYTES_PER_SAMPLE = 2  # 16-bit PCM (s16le)
+from virtual_mic_cel.config import (
+    DEFAULT_BUFFER_SIZE,
+    DEFAULT_UDP_PORT,
+    IS_LINUX,
+    IS_WINDOWS,
+    PCM_DTYPE,
+)
+from virtual_mic_cel.services.network.os_network import (
+    get_linux_ips,
+    get_windows_ips,
+    probe_primary_ip,
+)
 
 
 @dataclass
@@ -42,71 +48,34 @@ class DeviceInfo:
         return (time.time() - self.last_seen) < 2.0
 
 
-def get_local_ips() -> list[tuple[str, str]]:
+def get_local_ips() -> List[Tuple[str, str]]:
     """
     Returns a list of (interface_or_label, ip_address) tuples for active local IPv4 addresses.
     The primary outbound LAN IP is placed first.
     """
-    results: list[tuple[str, str]] = []
+    results: List[Tuple[str, str]] = []
     seen_ips: set[str] = set()
 
-    # 1. Probe primary outbound interface IP via UDP socket connect (no traffic sent)
-    primary_ip: str | None = None
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            if ip and not ip.startswith("127."):
-                primary_ip = ip
-    except OSError:
-        pass
+    primary_ip = probe_primary_ip()
 
-    # 2. On Linux, inspect `ip -4 -br addr show` for interface names
-    if sys.platform.startswith("linux"):
-        try:
-            out = subprocess.check_output(
-                ["ip", "-4", "-br", "addr", "show"],
-                text=True,
-                stderr=subprocess.DEVNULL,
-                timeout=2.0,
-            )
-            for line in out.splitlines():
-                parts = line.split()
-                if len(parts) >= 3:
-                    iface = parts[0]
-                    for addr_part in parts[2:]:
-                        ip = addr_part.split("/")[0]
-                        if ip and not ip.startswith("127."):
-                            if ip not in seen_ips:
-                                seen_ips.add(ip)
-                                label = (
-                                    f"{iface} (Principal)"
-                                    if ip == primary_ip
-                                    else iface
-                                )
-                                if ip == primary_ip:
-                                    results.insert(0, (label, ip))
-                                else:
-                                    results.append((label, ip))
-        except Exception:
-            pass
+    if IS_LINUX:
+        results.extend(get_linux_ips(primary_ip))
+    elif IS_WINDOWS:
+        results.extend(get_windows_ips(primary_ip))
 
-    # 3. Ensure primary_ip is included if not already found
+    for _, ip in results:
+        seen_ips.add(ip)
+
+    # Fallback if primary wasn't in interface lists
     if primary_ip and primary_ip not in seen_ips:
         seen_ips.add(primary_ip)
         results.insert(0, ("Principal", primary_ip))
 
-    # 4. Fallback via hostname resolution (Windows / generic)
+    # Generic fallback
     if not results:
-        try:
-            hostname = socket.gethostname()
-            for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
-                ip = str(info[4][0])
-                if ip and not ip.startswith("127.") and ip not in seen_ips:
-                    seen_ips.add(ip)
-                    results.append(("Red Local", ip))
-        except OSError:
-            pass
+        results.extend(get_windows_ips(primary_ip))
+        for _, ip in results:
+            seen_ips.add(ip)
 
     if not results:
         results.append(("Localhost", "127.0.0.1"))
@@ -153,7 +122,7 @@ class UDPAudioReceiver:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, DEFAULT_BUFFER_SIZE)
             except OSError:
                 pass
             sock.bind(("0.0.0.0", self.port))
@@ -254,7 +223,6 @@ class UDPAudioReceiver:
             if not data:
                 continue
 
-            # Ensure 16-bit sample alignment (2 bytes per sample)
             valid_len = len(data) & ~1
             if valid_len <= 0:
                 continue
@@ -264,11 +232,10 @@ class UDPAudioReceiver:
             ip, port = addr[0], addr[1]
             now = time.time()
 
-            # Only compute NumPy RMS/peak when the GUI is visible
             rms = 0.0
             peak = 0.0
             if self.compute_levels:
-                samples = np.frombuffer(data, dtype="<i2")
+                samples = np.frombuffer(data, dtype=PCM_DTYPE)
                 if samples.size > 0:
                     float_samples = samples.astype(np.float32) * (1.0 / 32768.0)
                     rms = float(np.sqrt(np.mean(float_samples * float_samples)))

@@ -3,7 +3,6 @@ from __future__ import annotations
 import gc
 import json
 import math
-import os
 import shutil
 import socket
 import subprocess
@@ -13,60 +12,21 @@ from collections import deque
 
 import dearpygui.dearpygui as dpg
 
-from virtual_mic_cel.audio import VirtualMicEngine
-from virtual_mic_cel.network import (
-    DEFAULT_UDP_PORT,
+from virtual_mic_cel.config import DEFAULT_CONTROL_PORT, DEFAULT_UDP_PORT
+from virtual_mic_cel.gui.helpers import format_bytes
+from virtual_mic_cel.gui.theme import create_danger_button_theme, setup_theme_and_fonts
+from virtual_mic_cel.services.audio import VirtualMicEngine
+from virtual_mic_cel.services.network import (
     DeviceInfo,
     UDPAudioReceiver,
     get_local_ips,
 )
-from virtual_mic_cel.tray import TrayCallbacks, TrayIcon, TrayState, create_tray
-
-
-def _find_system_font(bold: bool = False) -> str | None:
-    """Finds a readable system TTF font supporting Latin-1 / Spanish characters."""
-    try:
-        pattern = "sans-serif:bold" if bold else "sans-serif"
-        out = subprocess.check_output(
-            ["fc-match", "-f", "%{file}\n", pattern],
-            text=True,
-            stderr=subprocess.DEVNULL,
-            timeout=1.5,
-        ).strip()
-        if out and os.path.isfile(out):
-            return out
-    except Exception:
-        pass
-
-    candidates = (
-        [
-            "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/noto/NotoSans-Bold.ttf",
-            "C:/Windows/Fonts/segoeuib.ttf",
-            "C:/Windows/Fonts/arialbd.ttf",
-        ]
-        if bold
-        else [
-            "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/TTF/DejaVuSans.ttf",
-            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-            "C:/Windows/Fonts/segoeui.ttf",
-            "C:/Windows/Fonts/arial.ttf",
-        ]
-    )
-    for path in candidates:
-        if os.path.isfile(path):
-            return path
-    return None
-
-
-def _format_bytes(num_bytes: int) -> str:
-    if num_bytes < 1024:
-        return f"{num_bytes} B"
-    if num_bytes < 1024 * 1024:
-        return f"{num_bytes / 1024.0:.1f} KB"
-    return f"{num_bytes / (1024.0 * 1024.0):.2f} MB"
+from virtual_mic_cel.services.tray import (
+    TrayCallbacks,
+    TrayIcon,
+    TrayState,
+    create_tray,
+)
 
 
 def _notify_user(title: str, body: str) -> None:
@@ -80,25 +40,6 @@ def _notify_user(title: str, body: str) -> None:
             )
         except Exception:
             pass
-
-
-def send_ipc_command(control_port: int, command: str) -> dict[str, object] | None:
-    """
-    Sends a control command ('SHOW', 'HIDE', 'STOP', 'STATUS', 'TOGGLE_MONITOR', 'TOGGLE_MUTE')
-    to an already running VirtualMicApp instance on 127.0.0.1:control_port.
-    Returns parsed JSON response if an instance is running, or None if not running.
-    """
-    try:
-        with socket.create_connection(("127.0.0.1", control_port), timeout=0.6) as sock:
-            sock.sendall((command.strip().upper() + "\n").encode("utf-8"))
-            raw = sock.recv(8192).decode("utf-8", errors="replace").strip()
-            if raw:
-                return json.loads(raw)
-            return {"ok": True}
-    except OSError:
-        return None
-    except Exception:
-        return {"ok": True}
 
 
 class VirtualMicApp:
@@ -202,7 +143,10 @@ class VirtualMicApp:
                 try:
                     conn.settimeout(0.5)
                     cmd = (
-                        conn.recv(256).decode("utf-8", errors="replace").strip().upper()
+                        conn.recv(256)
+                        .decode("utf-8", errors="replace")
+                        .strip()
+                        .upper()
                     )
                     resp = self._handle_ipc_command(cmd)
                     conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
@@ -331,45 +275,13 @@ class VirtualMicApp:
             dpg.set_value("mic_status_text", f"ACTIVO — {self.audio.device_label}")
             dpg.configure_item("mic_status_text", color=(80, 230, 130, 255))
         else:
-            dpg.set_value("mic_status_text", f"ERROR — {self.audio.status_message}")
+            dpg.set_value(
+                "mic_status_text", f"ERROR — {self.audio.status_message}"
+            )
             dpg.configure_item("mic_status_text", color=(255, 95, 95, 255))
 
         if dpg.does_item_exist("backend_text"):
             dpg.set_value("backend_text", f"Backend: {self.audio.backend_name}")
-
-    def _setup_theme_and_fonts(self) -> None:
-        reg_font_path = _find_system_font(bold=False)
-        bold_font_path = _find_system_font(bold=True) or reg_font_path
-        self._large_font = None
-
-        if reg_font_path:
-            with dpg.font_registry():
-                default_font = dpg.add_font(reg_font_path, 16)
-                dpg.bind_font(default_font)
-
-                if bold_font_path:
-                    self._large_font = dpg.add_font(bold_font_path, 25)
-
-        with dpg.theme() as global_theme:
-            with dpg.theme_component(dpg.mvAll):
-                dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 14, 14)
-                dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 8, 6)
-                dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing, 10, 8)
-                dpg.add_theme_style(dpg.mvStyleVar_ChildRounding, 8)
-                dpg.add_theme_style(dpg.mvStyleVar_FrameRounding, 6)
-                dpg.add_theme_style(dpg.mvStyleVar_GrabRounding, 5)
-                dpg.add_theme_color(dpg.mvThemeCol_WindowBg, (18, 20, 26, 255))
-                dpg.add_theme_color(dpg.mvThemeCol_ChildBg, (26, 30, 40, 255))
-                dpg.add_theme_color(dpg.mvThemeCol_FrameBg, (38, 43, 56, 255))
-                dpg.add_theme_color(dpg.mvThemeCol_FrameBgHovered, (50, 58, 75, 255))
-                dpg.add_theme_color(dpg.mvThemeCol_Button, (45, 95, 190, 255))
-                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (65, 118, 220, 255))
-                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (35, 78, 160, 255))
-                dpg.add_theme_color(dpg.mvThemeCol_CheckMark, (80, 220, 140, 255))
-                dpg.add_theme_color(dpg.mvThemeCol_SliderGrab, (70, 140, 240, 255))
-                dpg.add_theme_color(dpg.mvThemeCol_PlotHistogram, (70, 210, 135, 255))
-                dpg.add_theme_color(dpg.mvThemeCol_TableHeaderBg, (34, 40, 54, 255))
-        dpg.bind_theme(global_theme)
 
     def _build_ui(self) -> None:
         ip_items = [f"{ip}  [{label}]" for label, ip in self.local_ips]
@@ -378,11 +290,7 @@ class VirtualMicApp:
             ip_items[0] if ip_items else "",
         )
 
-        with dpg.theme() as danger_btn_theme:
-            with dpg.theme_component(dpg.mvButton):
-                dpg.add_theme_color(dpg.mvThemeCol_Button, (175, 45, 55, 255))
-                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (205, 60, 70, 255))
-                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (145, 35, 45, 255))
+        danger_btn_theme = create_danger_button_theme()
 
         with dpg.window(tag="primary_window"):
             # --- 1. CONNECTION CARD FOR MOBILE DEVICE ---
@@ -433,7 +341,9 @@ class VirtualMicApp:
                         label="Actualizar IPs",
                         callback=lambda: self._refresh_ips_callback(),
                     )
-                    dpg.add_text("", tag="copy_status_text", color=(100, 230, 150, 255))
+                    dpg.add_text(
+                        "", tag="copy_status_text", color=(100, 230, 150, 255)
+                    )
 
             # --- 2. VIRTUAL MICROPHONE & SYSTEM MONITOR CONTROLS ---
             with dpg.child_window(height=255, border=True):
@@ -623,7 +533,7 @@ class VirtualMicApp:
                     tag=f"dev_rate_{ip_tag}",
                 )
                 dpg.add_text(
-                    f"{_format_bytes(dev.bytes_received)} ({dev.packets} pkts)",
+                    f"{format_bytes(dev.bytes_received)} ({dev.packets} pkts)",
                     tag=f"dev_bytes_{ip_tag}",
                 )
                 ago = max(0.0, now - dev.last_seen)
@@ -679,7 +589,7 @@ class VirtualMicApp:
         if dpg.does_item_exist("total_traffic_text"):
             dpg.set_value(
                 "total_traffic_text",
-                f"Total: {self.receiver.total_packets} paquetes ({_format_bytes(self.receiver.total_bytes)})",
+                f"Total: {self.receiver.total_packets} paquetes ({format_bytes(self.receiver.total_bytes)})",
             )
 
         current_ips = [d.ip for d in devices]
@@ -709,7 +619,7 @@ class VirtualMicApp:
                 if dpg.does_item_exist(f"dev_bytes_{ip_tag}"):
                     dpg.set_value(
                         f"dev_bytes_{ip_tag}",
-                        f"{_format_bytes(dev.bytes_received)} ({dev.packets} pkts)",
+                        f"{format_bytes(dev.bytes_received)} ({dev.packets} pkts)",
                     )
                 if dpg.does_item_exist(f"dev_ago_{ip_tag}"):
                     ago = max(0.0, now - dev.last_seen)
@@ -726,7 +636,7 @@ class VirtualMicApp:
 
         dpg.create_context()
         try:
-            self._setup_theme_and_fonts()
+            self._large_font = setup_theme_and_fonts()
             self._build_ui()
 
             dpg.create_viewport(
@@ -771,7 +681,6 @@ class VirtualMicApp:
             while not self._quit_requested:
                 if show_window:
                     self._run_gui_session()
-                    # Discard SHOW requests that arrived while the window was already open
                     self._wake_event.clear()
 
                     if self._quit_requested or not self.keep_in_background:
@@ -790,7 +699,7 @@ class VirtualMicApp:
                     print(f"[Virtual Mic Cel] {msg}")
                     _notify_user("Activo en segundo plano", msg)
 
-                # Sleep in ultra-low-power mode (0% GPU, 0% GUI CPU) until woken via IPC or signal
+                # Ultra-low power sleep (0% GPU/CPU) until woken up via IPC/tray
                 self._wake_event.wait()
                 if not self._quit_requested:
                     show_window = True

@@ -6,8 +6,9 @@ import signal
 import subprocess
 import sys
 
-from virtual_mic_cel.gui import VirtualMicApp, send_ipc_command
-from virtual_mic_cel.network import DEFAULT_UDP_PORT
+from virtual_mic_cel.config import DEFAULT_UDP_PORT, IS_WINDOWS
+from virtual_mic_cel.gui import VirtualMicApp
+from virtual_mic_cel.services import send_ipc_command
 
 
 def _print_status(resp: dict[str, object]) -> None:
@@ -146,7 +147,7 @@ def main() -> None:
         print("Instancia en segundo plano detectada — abriendo ventana gráfica.")
         return
 
-    # By default on Linux/macOS/Windows, spawn detached session so closing the terminal
+    # By default, spawn detached session so closing the terminal
     # or closing the GUI window leaves the background service running cleanly.
     if not args.foreground:
         cmd = [
@@ -160,12 +161,13 @@ def main() -> None:
         if args.background:
             cmd.append("--background")
         popen_kwargs: dict[str, object] = {}
-        if sys.platform.startswith("win"):
+        if IS_WINDOWS:
             pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
             if os.path.isfile(pythonw):
                 cmd[0] = pythonw
             popen_kwargs["creationflags"] = (
-                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+                subprocess.DETACHED_PROCESS
+                | subprocess.CREATE_NEW_PROCESS_GROUP
             )
         else:
             popen_kwargs["start_new_session"] = True
@@ -175,7 +177,7 @@ def main() -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             close_fds=True,
-            **popen_kwargs,  # type: ignore[arg-type]
+            **popen_kwargs,
         )
         mode_msg = "en segundo plano" if args.background else "con ventana gráfica"
         print(
