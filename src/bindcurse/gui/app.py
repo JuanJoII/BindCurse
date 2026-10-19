@@ -12,16 +12,16 @@ from collections import deque
 
 import dearpygui.dearpygui as dpg
 
-from virtual_mic_cel.config import DEFAULT_CONTROL_PORT, DEFAULT_UDP_PORT
-from virtual_mic_cel.gui.helpers import format_bytes
-from virtual_mic_cel.gui.theme import create_danger_button_theme, setup_theme_and_fonts
-from virtual_mic_cel.services.audio import VirtualMicEngine
-from virtual_mic_cel.services.network import (
+from bindcurse.config import DEFAULT_CONTROL_PORT, DEFAULT_UDP_PORT
+from bindcurse.gui.helpers import format_bytes
+from bindcurse.gui.theme import create_danger_button_theme, setup_theme_and_fonts
+from bindcurse.services.audio import VirtualMicEngine
+from bindcurse.services.network import (
     DeviceInfo,
     UDPAudioReceiver,
     get_local_ips,
 )
-from virtual_mic_cel.services.tray import (
+from bindcurse.services.tray import (
     TrayCallbacks,
     TrayIcon,
     TrayState,
@@ -34,7 +34,7 @@ def _notify_user(title: str, body: str) -> None:
     if shutil.which("notify-send"):
         try:
             subprocess.Popen(
-                ["notify-send", "-a", "Virtual Mic Cel", title, body],
+                ["notify-send", "-a", "BindCurse", title, body],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -640,7 +640,7 @@ class VirtualMicApp:
             self._build_ui()
 
             dpg.create_viewport(
-                title="Virtual Mic Cel — Receptor de Micrófono UDP (48kHz 16-bit Mono)",
+                title="BindCurse — Receptor de Micrófono UDP (48kHz 16-bit Mono)",
                 width=940,
                 height=675,
                 min_width=780,
@@ -674,8 +674,8 @@ class VirtualMicApp:
             if start_hidden:
                 self.receiver.compute_levels = False
                 print(
-                    f"[Virtual Mic Cel] Activo en 2do plano en {self.selected_ip}:{self.udp_port}. "
-                    "Ejecuta 'uv run virtual-mic-cel' para abrir la interfaz o '--stop' para apagarlo."
+                    f"[BindCurse] Activo en 2do plano en {self.selected_ip}:{self.udp_port}. "
+                    "Ejecuta 'uv run bindcurse' para abrir la interfaz o '--stop' para apagarlo."
                 )
 
             while not self._quit_requested:
@@ -694,9 +694,9 @@ class VirtualMicApp:
                     else:
                         msg = (
                             f"Micrófono activo en segundo plano ({self.selected_ip}:{self.udp_port}). "
-                            "Ejecuta 'virtual-mic-cel' para reabrir la ventana."
+                            "Ejecuta 'bindcurse' para reabrir la ventana."
                         )
-                    print(f"[Virtual Mic Cel] {msg}")
+                    print(f"[BindCurse] {msg}")
                     _notify_user("Activo en segundo plano", msg)
 
                 # Ultra-low power sleep (0% GPU/CPU) until woken up via IPC/tray

@@ -10,8 +10,8 @@ import os
 import threading
 from typing import Callable, Optional
 
-from virtual_mic_cel.services.tray.base import TrayCallbacks, TrayIcon, TrayState
-from virtual_mic_cel.services.tray.icons import render_icon, to_argb32_bytes
+from bindcurse.services.tray.base import TrayCallbacks, TrayIcon, TrayState
+from bindcurse.services.tray.icons import render_icon, to_argb32_bytes
 
 # Menu item IDs
 M_ROOT, M_OPEN, M_SEP1, M_STATUS, M_ADDR, M_SEP2, M_MONITOR, M_MUTE, M_SEP3, M_QUIT = (
@@ -218,11 +218,11 @@ try:
 
         @dbus_property(access=PropertyAccess.READ)
         def Id(self) -> "s":
-            return "virtual-mic-cel"
+            return "bindcurse"
 
         @dbus_property(access=PropertyAccess.READ)
         def Title(self) -> "s":
-            return "Virtual Mic Cel"
+            return "BindCurse"
 
         @dbus_property(access=PropertyAccess.READ)
         def Status(self) -> "s":
@@ -267,7 +267,7 @@ try:
         @dbus_property(access=PropertyAccess.READ)
         def ToolTip(self) -> "(sa(iiay)ss)":
             st = self.tray.state
-            return ["", [], "Virtual Mic Cel", st.tooltip]
+            return ["", [], "BindCurse", st.tooltip]
 
         @dbus_property(access=PropertyAccess.READ)
         def ItemIsMenu(self) -> "b":

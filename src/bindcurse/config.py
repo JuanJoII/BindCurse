@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import sys
 
+# Application Identity
+APP_NAME: str = "BindCurse"
+APP_ID: str = "bindcurse"
+
 # Audio Stream & PCM Specifications
 DEFAULT_UDP_PORT: int = 5005
 DEFAULT_CONTROL_PORT: int = 5006
@@ -15,9 +19,9 @@ CHUNK_SAMPLES: int = 960  # 20ms at 48000Hz
 DEFAULT_BUFFER_SIZE: int = 262144  # 256 KB socket rcvbuf
 
 # Device naming
-VIRTUAL_SINK_NAME: str = "virtual_mic_cel_sink"
-VIRTUAL_SOURCE_NAME: str = "virtual_mic_cel_source"
-VIRTUAL_MIC_DESCRIPTION: str = "Virtual_Mic_Cel"
+VIRTUAL_SINK_NAME: str = "bindcurse_sink"
+VIRTUAL_SOURCE_NAME: str = "bindcurse_source"
+VIRTUAL_MIC_DESCRIPTION: str = "BindCurse_Mic"
 
 # Platform detection
 IS_LINUX: bool = sys.platform.startswith("linux")

@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from virtual_mic_cel.services.audio import (
+from bindcurse.services.audio import (
     LinuxAudioBackend,
     VirtualMicEngine,
     WindowsAudioBackend,
 )
-from virtual_mic_cel.services.network import (
+from bindcurse.services.network import (
     DeviceInfo,
     UDPAudioReceiver,
     get_local_ips,
     send_ipc_command,
 )
-from virtual_mic_cel.services.tray import (
+from bindcurse.services.tray import (
     TrayCallbacks,
     TrayIcon,
     TrayState,

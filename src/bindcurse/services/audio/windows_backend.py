@@ -4,7 +4,7 @@ from typing import Any
 
 import sounddevice as sd
 
-from virtual_mic_cel.config import CHANNELS, SAMPLE_RATE
+from bindcurse.config import CHANNELS, SAMPLE_RATE
 
 
 class WindowsAudioBackend:

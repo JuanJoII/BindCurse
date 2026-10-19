@@ -4,8 +4,8 @@ import threading
 import time
 from typing import Callable, Optional
 
-from virtual_mic_cel.services.tray.base import TrayCallbacks, TrayIcon, TrayState
-from virtual_mic_cel.services.tray.icons import render_icon
+from bindcurse.services.tray.base import TrayCallbacks, TrayIcon, TrayState
+from bindcurse.services.tray.icons import render_icon
 
 
 class WindowsTray(TrayIcon):
@@ -61,9 +61,9 @@ class WindowsTray(TrayIcon):
         )
         st = self.state
         self._icon = pystray.Icon(
-            "virtual_mic_cel",
+            "bindcurse",
             render_icon(st.icon_state, 64, st.monitor),
-            f"Virtual Mic Cel\n{st.tooltip}"[:127],
+            f"BindCurse\n{st.tooltip}"[:127],
             menu,
         )
         try:
@@ -103,7 +103,7 @@ class WindowsTray(TrayIcon):
                 self._icon.icon = render_icon(
                     new_state.icon_state, 64, new_state.monitor
                 )
-            self._icon.title = f"Virtual Mic Cel\n{new_state.tooltip}"[:127]
+            self._icon.title = f"BindCurse\n{new_state.tooltip}"[:127]
             self._icon.update_menu()
         except Exception:
             pass

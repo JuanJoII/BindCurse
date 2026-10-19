@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from virtual_mic_cel.services.network.ipc import send_ipc_command
-from virtual_mic_cel.services.network.os_network import (
+from bindcurse.services.network.ipc import send_ipc_command
+from bindcurse.services.network.os_network import (
     get_linux_ips,
     get_windows_ips,
     probe_primary_ip,
 )
-from virtual_mic_cel.services.network.udp_receiver import (
+from bindcurse.services.network.udp_receiver import (
     DeviceInfo,
     UDPAudioReceiver,
     get_local_ips,

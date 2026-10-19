@@ -6,13 +6,13 @@ import signal
 import subprocess
 import sys
 
-from virtual_mic_cel.config import DEFAULT_UDP_PORT, IS_WINDOWS
-from virtual_mic_cel.gui import VirtualMicApp
-from virtual_mic_cel.services import send_ipc_command
+from bindcurse.config import APP_NAME, DEFAULT_UDP_PORT, IS_WINDOWS
+from bindcurse.gui import VirtualMicApp
+from bindcurse.services import send_ipc_command
 
 
 def _print_status(resp: dict[str, object]) -> None:
-    print(f"Estado Virtual Mic Cel (UDP {resp.get('ip')}:{resp.get('udp_port')}):")
+    print(f"Estado {APP_NAME} (UDP {resp.get('ip')}:{resp.get('udp_port')}):")
     print(
         f"  Micrófono Virtual : {'ACTIVO' if resp.get('virtual_mic_ready') else 'INACTIVO'} ({resp.get('device_label')})"
     )
@@ -39,8 +39,8 @@ def _print_status(resp: dict[str, object]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="virtual-mic-cel",
-        description="Micrófono virtual UDP (PCM 16-bit, 48000Hz, mono) con modo segundo plano.",
+        prog="bindcurse",
+        description="BindCurse: Micrófono virtual UDP (PCM 16-bit, 48000Hz, mono) con modo segundo plano.",
     )
     parser.add_argument(
         "-p",
@@ -97,22 +97,22 @@ def main() -> None:
 
     if args.stop:
         if existing is None:
-            print("Virtual Mic Cel no está en ejecución.")
+            print(f"{APP_NAME} no está en ejecución.")
             return
         send_ipc_command(control_port, "STOP")
-        print("Virtual Mic Cel detenido y micrófono virtual descargado.")
+        print(f"{APP_NAME} detenido y micrófono virtual descargado.")
         return
 
     if args.status:
         if existing is None:
-            print("Virtual Mic Cel no está en ejecución.")
+            print(f"{APP_NAME} no está en ejecución.")
             return
         _print_status(existing)
         return
 
     if args.hide:
         if existing is None:
-            print("Virtual Mic Cel no está en ejecución.")
+            print(f"{APP_NAME} no está en ejecución.")
             return
         send_ipc_command(control_port, "HIDE")
         print("Ventana ocultada en segundo plano.")
@@ -120,7 +120,7 @@ def main() -> None:
 
     if args.toggle_monitor:
         if existing is None:
-            print("Virtual Mic Cel no está en ejecución.")
+            print(f"{APP_NAME} no está en ejecución.")
             return
         resp = send_ipc_command(control_port, "TOGGLE_MONITOR") or {}
         state = "ACTIVADO" if resp.get("monitor_enabled") else "DESACTIVADO"
@@ -129,7 +129,7 @@ def main() -> None:
 
     if args.toggle_mute:
         if existing is None:
-            print("Virtual Mic Cel no está en ejecución.")
+            print(f"{APP_NAME} no está en ejecución.")
             return
         resp = send_ipc_command(control_port, "TOGGLE_MUTE") or {}
         state = "SILENCIADO" if resp.get("mic_muted") else "ACTIVO"
@@ -140,7 +140,7 @@ def main() -> None:
     if existing is not None:
         if args.background:
             print(
-                f"Virtual Mic Cel ya está activo en segundo plano ({existing.get('ip')}:{existing.get('udp_port')})."
+                f"{APP_NAME} ya está activo en segundo plano ({existing.get('ip')}:{existing.get('udp_port')})."
             )
             return
         send_ipc_command(control_port, "SHOW")
@@ -153,7 +153,7 @@ def main() -> None:
         cmd = [
             sys.executable,
             "-m",
-            "virtual_mic_cel",
+            "bindcurse",
             "--foreground",
             "--port",
             str(args.port),
@@ -181,10 +181,10 @@ def main() -> None:
         )
         mode_msg = "en segundo plano" if args.background else "con ventana gráfica"
         print(
-            f"Virtual Mic Cel iniciado ({mode_msg}, UDP :{args.port}).\n"
+            f"{APP_NAME} iniciado ({mode_msg}, UDP :{args.port}).\n"
             "  • Si cierras la ventana, seguirá activo en 2do plano con mínimo uso de recursos.\n"
-            "  • Ejecuta 'uv run virtual-mic-cel' cuando quieras volver a abrir la interfaz.\n"
-            "  • Ejecuta 'uv run virtual-mic-cel --stop' (o el botón 'Apagar y Salir') para cerrarlo del todo."
+            "  • Ejecuta 'uv run bindcurse' cuando quieras volver a abrir la interfaz.\n"
+            "  • Ejecuta 'uv run bindcurse --stop' (o el botón 'Apagar y Salir') para cerrarlo del todo."
         )
         return
 

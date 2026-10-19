@@ -1,4 +1,4 @@
-from virtual_mic_cel import main
+from bindcurse import main
 
 if __name__ == "__main__":
     main()

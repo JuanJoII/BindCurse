@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 
-from virtual_mic_cel.config import (
+from bindcurse.config import (
     CHANNELS,
     SAMPLE_RATE,
     VIRTUAL_MIC_DESCRIPTION,

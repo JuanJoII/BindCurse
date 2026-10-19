@@ -8,14 +8,14 @@ from typing import Callable, List, Tuple
 
 import numpy as np
 
-from virtual_mic_cel.config import (
+from bindcurse.config import (
     DEFAULT_BUFFER_SIZE,
     DEFAULT_UDP_PORT,
     IS_LINUX,
     IS_WINDOWS,
     PCM_DTYPE,
 )
-from virtual_mic_cel.services.network.os_network import (
+from bindcurse.services.network.os_network import (
     get_linux_ips,
     get_windows_ips,
     probe_primary_ip,

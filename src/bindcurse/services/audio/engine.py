@@ -7,7 +7,7 @@ import time
 
 import numpy as np
 
-from virtual_mic_cel.config import (
+from bindcurse.config import (
     CHANNELS,
     CHUNK_SAMPLES,
     CURRENT_PLATFORM,
@@ -16,8 +16,8 @@ from virtual_mic_cel.config import (
     PCM_DTYPE,
     SAMPLE_RATE,
 )
-from virtual_mic_cel.services.audio.linux_backend import LinuxAudioBackend
-from virtual_mic_cel.services.audio.windows_backend import WindowsAudioBackend
+from bindcurse.services.audio.linux_backend import LinuxAudioBackend
+from bindcurse.services.audio.windows_backend import WindowsAudioBackend
 
 
 class VirtualMicEngine:

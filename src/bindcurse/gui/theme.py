@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dearpygui.dearpygui as dpg
 
-from virtual_mic_cel.gui.helpers import find_system_font
+from bindcurse.gui.helpers import find_system_font
 
 
 def setup_theme_and_fonts() -> int | str | None:
