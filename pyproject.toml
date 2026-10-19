@@ -1,0 +1,24 @@
+[project]
+name = "virtual-mic-cel"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Juan José Camacho", email = "juanjose34251@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "dbus-fast>=5.2.0 ; sys_platform == 'linux'",
+    "dearpygui>=2.3.1",
+    "numpy>=2.4.6",
+    "pillow>=13.0.0",
+    "pystray>=0.19.5 ; sys_platform == 'win32'",
+    "sounddevice>=0.5.6",
+]
+
+[project.scripts]
+virtual-mic-cel = "virtual_mic_cel:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
