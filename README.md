@@ -17,6 +17,9 @@ Aplicación en Python con interfaz **Dear PyGui** que crea un micrófono virtual
   - **Windows (VB-Cable)**: Se conecta automáticamente a `CABLE Input (VB-Audio Virtual Cable)`.
 - **Datos de conexión para el móvil**: Muestra en grande la dirección **IP local** y el **puerto UDP (`5005`)** para ingresarlos en el dispositivo móvil.
 - **Monitoreo en tiempo real**: Opción para **escuchar el micrófono por la salida de audio del sistema (Monitor)** con control de volumen independiente y ganancia/mute del micrófono.
+- **Persistencia automática de configuraciones**:
+  - Todas las configuraciones (ganancia del micrófono, volumen de monitoreo, estado de escucha/mute, mantener en segundo plano, IP/interfaz preferida y puerto) se guardan automáticamente en `~/.config/bindcurse/config.json` (Linux) o `%APPDATA%\BindCurse\config.json` (Windows).
+  - Incluye guardado atómico y *debouncing* para evitar sobrecarga de disco al deslizar sliders, restaurando exactamente tus preferencias cada vez que abres la app.
 
 ## Comandos (`uv`)
 
@@ -56,5 +59,8 @@ uv run python test/test_gui_lifecycle.py
 
 # Validar el ciclo completo de la app con comandos IPC en segundo plano
 uv run python test/test_app_ipc_lifecycle.py
+
+# Validar la persistencia de configuraciones, guardado atómico y debouncing
+uv run python test/test_settings_persistence.py
 ```
 

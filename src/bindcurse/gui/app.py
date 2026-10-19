@@ -12,7 +12,7 @@ from collections import deque
 
 import dearpygui.dearpygui as dpg
 
-from bindcurse.config import DEFAULT_CONTROL_PORT, DEFAULT_UDP_PORT
+from bindcurse.config import DEFAULT_CONTROL_PORT, DEFAULT_UDP_PORT, UserSettings
 from bindcurse.gui.helpers import format_bytes, terminate_dpg_glfw
 from bindcurse.gui.theme import create_danger_button_theme, setup_theme_and_fonts
 from bindcurse.services.audio import VirtualMicEngine
@@ -43,22 +43,35 @@ def _notify_user(title: str, body: str) -> None:
 
 
 class VirtualMicApp:
-    def __init__(self, udp_port: int = DEFAULT_UDP_PORT) -> None:
-        self.udp_port = udp_port
-        self.control_port = udp_port + 1
+    def __init__(self, udp_port: int | None = None) -> None:
+        self.settings = UserSettings.load()
+        self.udp_port = udp_port if udp_port is not None else self.settings.udp_port
+        self.control_port = self.udp_port + 1
         self.audio = VirtualMicEngine()
+
+        # Apply persisted user audio parameters
+        self.audio.mic_gain = self.settings.mic_gain
+        self.audio.monitor_volume = self.settings.monitor_volume
+        self.audio.mic_muted = self.settings.mic_muted
+        self.audio.monitor_enabled = self.settings.monitor_enabled
+
         self.receiver = UDPAudioReceiver(
             port=self.udp_port,
             on_audio_chunk=self.audio.process_audio_chunk,
         )
         self.local_ips: list[tuple[str, str]] = get_local_ips()
-        self.selected_ip: str = self.local_ips[0][1] if self.local_ips else "127.0.0.1"
+        known_ips = [ip for _, ip in self.local_ips]
+        if self.settings.preferred_ip and self.settings.preferred_ip in known_ips:
+            self.selected_ip = self.settings.preferred_ip
+        else:
+            self.selected_ip = known_ips[0] if known_ips else "127.0.0.1"
+
         self.level_history: deque[float] = deque([0.0] * 120, maxlen=120)
         self._large_font: int | str | None = None
         self._known_table_ips: list[str] = []
 
         # Background / lifecycle state
-        self.keep_in_background: bool = True
+        self.keep_in_background: bool = self.settings.keep_in_background
         self.gui_active: bool = False
         self._quit_requested: bool = False
         self._hide_requested: bool = False
@@ -93,6 +106,8 @@ class VirtualMicApp:
 
     def start_services(self) -> None:
         self.audio.setup_virtual_mic()
+        if self.audio.monitor_enabled:
+            self.audio.set_monitor_enabled(True)
         self.receiver.start()
         self._start_ipc_server()
         self.tray.start()
@@ -100,6 +115,7 @@ class VirtualMicApp:
     def stop_services(self) -> None:
         self._quit_requested = True
         self._wake_event.set()
+        self.settings.flush()
         self.tray.stop()
         if self._ipc_sock is not None:
             try:
@@ -173,9 +189,13 @@ class VirtualMicApp:
             return {"ok": True, "action": "stop"}
         if cmd == "TOGGLE_MONITOR":
             self.audio.set_monitor_enabled(not self.audio.monitor_enabled)
+            self.settings.monitor_enabled = self.audio.monitor_enabled
+            self.settings.save()
             return {"ok": True, "monitor_enabled": self.audio.monitor_enabled}
         if cmd == "TOGGLE_MUTE":
             self.audio.mic_muted = not self.audio.mic_muted
+            self.settings.mic_muted = self.audio.mic_muted
+            self.settings.save()
             return {"ok": True, "mic_muted": self.audio.mic_muted}
         # Default: STATUS
         devices = self.receiver.get_devices_snapshot()
@@ -218,6 +238,8 @@ class VirtualMicApp:
         if app_data:
             ip = app_data.split()[0].strip()
             self.selected_ip = ip
+            self.settings.preferred_ip = ip
+            self.settings.save()
             self._update_connection_banner()
 
     def _update_connection_banner(self) -> None:
@@ -237,18 +259,28 @@ class VirtualMicApp:
 
     def _on_monitor_toggled(self, _sender: int, app_data: bool) -> None:
         self.audio.set_monitor_enabled(bool(app_data))
+        self.settings.monitor_enabled = self.audio.monitor_enabled
+        self.settings.save()
 
     def _on_mute_toggled(self, _sender: int, app_data: bool) -> None:
         self.audio.mic_muted = bool(app_data)
+        self.settings.mic_muted = self.audio.mic_muted
+        self.settings.save()
 
     def _on_bg_toggled(self, _sender: int, app_data: bool) -> None:
         self.keep_in_background = bool(app_data)
+        self.settings.keep_in_background = self.keep_in_background
+        self.settings.save()
 
     def _on_mic_gain_changed(self, _sender: int, app_data: float) -> None:
         self.audio.mic_gain = float(app_data) / 100.0
+        self.settings.mic_gain = self.audio.mic_gain
+        self.settings.save_debounced()
 
     def _on_monitor_vol_changed(self, _sender: int, app_data: float) -> None:
         self.audio.monitor_volume = float(app_data) / 100.0
+        self.settings.monitor_volume = self.audio.monitor_volume
+        self.settings.save_debounced()
 
     def _on_recreate_mic(self) -> None:
         self.audio.setup_virtual_mic()

@@ -6,7 +6,7 @@ import signal
 import subprocess
 import sys
 
-from bindcurse.config import APP_NAME, DEFAULT_UDP_PORT, IS_WINDOWS
+from bindcurse.config import APP_NAME, DEFAULT_UDP_PORT, IS_WINDOWS, UserSettings
 from bindcurse.gui import VirtualMicApp
 from bindcurse.services import send_ipc_command
 
@@ -48,8 +48,8 @@ def main() -> None:
         "-p",
         "--port",
         type=int,
-        default=DEFAULT_UDP_PORT,
-        help=f"Puerto UDP de escucha (por defecto: {DEFAULT_UDP_PORT})",
+        default=None,
+        help=f"Puerto UDP de escucha (por defecto según configuración: {DEFAULT_UDP_PORT})",
     )
     parser.add_argument(
         "-b",
@@ -92,7 +92,13 @@ def main() -> None:
         help="Alternar silencio (mute) del micrófono virtual",
     )
     args = parser.parse_args()
-    control_port = args.port + 1
+
+    settings = UserSettings.load()
+    port = args.port if args.port is not None else settings.udp_port
+    if args.port is not None and args.port != settings.udp_port:
+        settings.udp_port = args.port
+        settings.save()
+    control_port = port + 1
 
     # Check if an instance is already running
     existing = send_ipc_command(control_port, "STATUS")
@@ -158,7 +164,7 @@ def main() -> None:
             "bindcurse",
             "--foreground",
             "--port",
-            str(args.port),
+            str(port),
         ]
         if args.background:
             cmd.append("--background")
@@ -183,14 +189,14 @@ def main() -> None:
         )
         mode_msg = "en segundo plano" if args.background else "con ventana gráfica"
         print(
-            f"{APP_NAME} iniciado ({mode_msg}, UDP :{args.port}).\n"
+            f"{APP_NAME} iniciado ({mode_msg}, UDP :{port}).\n"
             "  • Si cierras la ventana, seguirá activo en 2do plano con mínimo uso de recursos.\n"
             "  • Ejecuta 'uv run bindcurse' cuando quieras volver a abrir la interfaz.\n"
             "  • Ejecuta 'uv run bindcurse --stop' (o el botón 'Apagar y Salir') para cerrarlo del todo."
         )
         return
 
-    app = VirtualMicApp(udp_port=args.port)
+    app = VirtualMicApp(udp_port=port)
 
     def _handle_sig(_sig: int, _frame: object) -> None:
         app.stop_services()
