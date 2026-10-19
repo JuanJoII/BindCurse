@@ -48,3 +48,30 @@ def format_bytes(num_bytes: int) -> str:
     if num_bytes < 1024 * 1024:
         return f"{num_bytes / 1024.0:.1f} KB"
     return f"{num_bytes / (1024.0 * 1024.0):.2f} MB"
+
+
+def terminate_dpg_glfw() -> None:
+    """
+    Terminates the GLFW backend after destroying DearPyGui context.
+
+    DearPyGui's `destroy_context()` only frees its internal ImGui data
+    structures, leaving the native GLFW window mapped on the display server
+    (X11 / Wayland / Win32). Because event processing stops when the render loop
+    exits, that un-destroyed window freezes on screen and does not respond to events.
+
+    Explicitly invoking `glfwTerminate()` properly closes the native GLFW window
+    and cleans up display surfaces so that the application can cleanly run in
+    the background with zero lingering windows.
+    """
+    try:
+        import ctypes
+        import dearpygui._dearpygui as _dpg_ext
+
+        lib = ctypes.CDLL(_dpg_ext.__file__)
+        if hasattr(lib, "glfwTerminate"):
+            lib.glfwTerminate.restype = None
+            lib.glfwTerminate.argtypes = []
+            lib.glfwTerminate()
+    except Exception:
+        pass
+

@@ -13,7 +13,7 @@ from collections import deque
 import dearpygui.dearpygui as dpg
 
 from bindcurse.config import DEFAULT_CONTROL_PORT, DEFAULT_UDP_PORT
-from bindcurse.gui.helpers import format_bytes
+from bindcurse.gui.helpers import format_bytes, terminate_dpg_glfw
 from bindcurse.gui.theme import create_danger_button_theme, setup_theme_and_fonts
 from bindcurse.services.audio import VirtualMicEngine
 from bindcurse.services.network import (
@@ -156,15 +156,20 @@ class VirtualMicApp:
     def _handle_ipc_command(self, cmd: str) -> dict[str, object]:
         if cmd == "SHOW":
             self._hide_requested = False
-            self._wake_event.set()
-            return {"ok": True, "action": "show", "gui_active": True}
+            if not self.gui_active:
+                self._wake_event.set()
+            return {"ok": True, "action": "show", "gui_active": self.gui_active}
         if cmd == "HIDE":
             self._hide_requested = True
+            if self.gui_active:
+                dpg.stop_dearpygui()
             return {"ok": True, "action": "hide"}
         if cmd in ("STOP", "QUIT"):
             self._quit_requested = True
             self._hide_requested = True
             self._wake_event.set()
+            if self.gui_active:
+                dpg.stop_dearpygui()
             return {"ok": True, "action": "stop"}
         if cmd == "TOGGLE_MONITOR":
             self.audio.set_monitor_enabled(not self.audio.monitor_enabled)
@@ -637,7 +642,8 @@ class VirtualMicApp:
     def _run_gui_session(self) -> None:
         """
         Opens the Dear PyGui window and runs the render loop until the user closes it.
-        When closed, completely destroys the OpenGL/DearPyGui context to free GPU/CPU.
+        When closed, completely destroys the OpenGL/DearPyGui context and terminates GLFW
+        to close the native OS window and free GPU/CPU.
         """
         self.gui_active = True
         self._hide_requested = False
@@ -671,7 +677,11 @@ class VirtualMicApp:
                     last_ui_update = now
                 dpg.render_dearpygui_frame()
         finally:
-            dpg.destroy_context()
+            try:
+                dpg.destroy_context()
+            except Exception:
+                pass
+            terminate_dpg_glfw()
             self.gui_active = False
             self.receiver.compute_levels = False
             gc.collect()
@@ -690,10 +700,11 @@ class VirtualMicApp:
             while not self._quit_requested:
                 if show_window:
                     self._run_gui_session()
-                    self._wake_event.clear()
 
                     if self._quit_requested or not self.keep_in_background:
                         break
+
+                    show_window = False
 
                     if self.tray.available:
                         msg = (
@@ -710,6 +721,7 @@ class VirtualMicApp:
 
                 # Ultra-low power sleep (0% GPU/CPU) until woken up via IPC/tray
                 self._wake_event.wait()
+                self._wake_event.clear()
                 if not self._quit_requested:
                     show_window = True
         finally:

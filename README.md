@@ -39,3 +39,22 @@ uv run bindcurse --toggle-mute
 # Apagar por completo el servicio en segundo plano y eliminar el micrófono virtual
 uv run bindcurse --stop
 ```
+
+## Pruebas y Testing (`test/`)
+
+El directorio [`test/`](file:///home/juanjo/Projects/virtual_mic_cel/test) contiene scripts de prueba y validación:
+
+```bash
+# Simular un cliente móvil enviando handshakes y audio PCM de prueba
+uv run python test/simulate_client.py -H 127.0.0.1 -p 5005
+
+# Servidor standalone para diagnóstico aislado de paquetes UDP
+uv run python test/bindcurse_server_standalone.py -p 9920 --vu
+
+# Validar el ciclo de vida de la ventana gráfica (destrucción limpia y reapertura)
+uv run python test/test_gui_lifecycle.py
+
+# Validar el ciclo completo de la app con comandos IPC en segundo plano
+uv run python test/test_app_ipc_lifecycle.py
+```
+
