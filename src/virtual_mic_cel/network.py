@@ -79,7 +79,11 @@ def get_local_ips() -> list[tuple[str, str]]:
                         if ip and not ip.startswith("127."):
                             if ip not in seen_ips:
                                 seen_ips.add(ip)
-                                label = f"{iface} (Principal)" if ip == primary_ip else iface
+                                label = (
+                                    f"{iface} (Principal)"
+                                    if ip == primary_ip
+                                    else iface
+                                )
                                 if ip == primary_ip:
                                     results.insert(0, (label, ip))
                                 else:
@@ -160,7 +164,9 @@ class UDPAudioReceiver:
             raise
 
         self.running = True
-        self._thread = threading.Thread(target=self._recv_loop, name="UDPAudioReceiver", daemon=True)
+        self._thread = threading.Thread(
+            target=self._recv_loop, name="UDPAudioReceiver", daemon=True
+        )
         self._thread.start()
 
     def stop(self) -> None:
@@ -222,7 +228,9 @@ class UDPAudioReceiver:
         now = time.time()
         removed = 0
         with self._lock:
-            to_delete = [ip for ip, d in self._devices.items() if (now - d.last_seen) >= 2.0]
+            to_delete = [
+                ip for ip, d in self._devices.items() if (now - d.last_seen) >= 2.0
+            ]
             for ip in to_delete:
                 del self._devices[ip]
                 removed += 1

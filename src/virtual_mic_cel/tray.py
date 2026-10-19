@@ -92,7 +92,9 @@ def create_tray(callbacks: TrayCallbacks) -> TrayIcon:
 # ---------------------------------------------------------------------------
 
 # Menu item IDs
-M_ROOT, M_OPEN, M_SEP1, M_STATUS, M_ADDR, M_SEP2, M_MONITOR, M_MUTE, M_SEP3, M_QUIT = range(10)
+M_ROOT, M_OPEN, M_SEP1, M_STATUS, M_ADDR, M_SEP2, M_MONITOR, M_MUTE, M_SEP3, M_QUIT = (
+    range(10)
+)
 
 
 class LinuxSNITray(TrayIcon):
@@ -112,7 +114,9 @@ class LinuxSNITray(TrayIcon):
 
     # ---- public API ----
     def start(self) -> None:
-        self._thread = threading.Thread(target=self._thread_main, name="SNITray", daemon=True)
+        self._thread = threading.Thread(
+            target=self._thread_main, name="SNITray", daemon=True
+        )
         self._thread.start()
 
     def stop(self) -> None:
@@ -137,7 +141,9 @@ class LinuxSNITray(TrayIcon):
     def request_refresh(self) -> None:
         loop = self._loop
         if loop is not None and loop.is_running():
-            loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self._refresh(force=False)))
+            loop.call_soon_threadsafe(
+                lambda: asyncio.ensure_future(self._refresh(force=False))
+            )
 
     @staticmethod
     def _safe_call(fn: Callable[[], None]) -> None:
@@ -181,7 +187,9 @@ class LinuxSNITray(TrayIcon):
         try:
             while not self._stop_evt.is_set():
                 try:
-                    await asyncio.wait_for(self._stop_evt.wait(), timeout=self.POLL_INTERVAL)
+                    await asyncio.wait_for(
+                        self._stop_evt.wait(), timeout=self.POLL_INTERVAL
+                    )
                 except asyncio.TimeoutError:
                     pass
                 await self._refresh(force=False)
@@ -259,7 +267,10 @@ class LinuxSNITray(TrayIcon):
         self.state = new_state
         if self._item is None or self._menu is None:
             return
-        if (new_state.icon_state, new_state.monitor) != (old.icon_state, old.monitor) or force:
+        if (new_state.icon_state, new_state.monitor) != (
+            old.icon_state,
+            old.monitor,
+        ) or force:
             self._item.NewIcon()
         self._item.NewToolTip()
         self.revision += 1
@@ -268,7 +279,12 @@ class LinuxSNITray(TrayIcon):
 
 try:
     from dbus_fast import PropertyAccess, Variant
-    from dbus_fast.service import ServiceInterface, dbus_property, method, signal as dbus_signal
+    from dbus_fast.service import (
+        ServiceInterface,
+        dbus_property,
+        method,
+        signal as dbus_signal,
+    )
 
     class _SNIItemInterface(ServiceInterface):
         def __init__(self, tray: LinuxSNITray) -> None:
@@ -393,7 +409,10 @@ try:
             if item_id == M_OPEN:
                 return {"label": Variant("s", "Abrir interfaz")}
             if item_id == M_STATUS:
-                return {"label": Variant("s", st.status_line), "enabled": Variant("b", False)}
+                return {
+                    "label": Variant("s", st.status_line),
+                    "enabled": Variant("b", False),
+                }
             if item_id == M_ADDR:
                 return {
                     "label": Variant("s", f"IP: {st.ip}   Puerto UDP: {st.port}"),
@@ -415,13 +434,24 @@ try:
                 return {"label": Variant("s", "Apagar y salir")}
             return {}
 
-        CHILDREN = [M_OPEN, M_SEP1, M_STATUS, M_ADDR, M_SEP2, M_MONITOR, M_MUTE, M_SEP3, M_QUIT]
+        CHILDREN = [
+            M_OPEN,
+            M_SEP1,
+            M_STATUS,
+            M_ADDR,
+            M_SEP2,
+            M_MONITOR,
+            M_MUTE,
+            M_SEP3,
+            M_QUIT,
+        ]
 
         def _layout(self, item_id: int, depth: int) -> list:
             children = []
             if item_id == M_ROOT and depth != 0:
                 children = [
-                    Variant("(ia{sv}av)", self._layout(cid, depth - 1)) for cid in self.CHILDREN
+                    Variant("(ia{sv}av)", self._layout(cid, depth - 1))
+                    for cid in self.CHILDREN
                 ]
             return [item_id, self._item_props(item_id), children]
 
@@ -464,7 +494,9 @@ try:
             return []
 
         @method()
-        def GetLayout(self, parent_id: "i", recursion_depth: "i", property_names: "as") -> "u(ia{sv}av)":
+        def GetLayout(
+            self, parent_id: "i", recursion_depth: "i", property_names: "as"
+        ) -> "u(ia{sv}av)":
             return [self.tray.revision, self._layout(parent_id, recursion_depth)]
 
         @method()
@@ -546,7 +578,9 @@ class WindowsTray(TrayIcon):
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(lambda _i: self.state.status_line, None, enabled=False),
             pystray.MenuItem(
-                lambda _i: f"IP: {self.state.ip}   Puerto UDP: {self.state.port}", None, enabled=False
+                lambda _i: f"IP: {self.state.ip}   Puerto UDP: {self.state.port}",
+                None,
+                enabled=False,
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
@@ -555,7 +589,9 @@ class WindowsTray(TrayIcon):
                 checked=lambda _i: self.state.monitor,
             ),
             pystray.MenuItem(
-                "Silenciar micrófono", _do(cb.toggle_mute), checked=lambda _i: self.state.muted
+                "Silenciar micrófono",
+                _do(cb.toggle_mute),
+                checked=lambda _i: self.state.muted,
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Apagar y salir", _do(cb.quit_app)),
@@ -575,7 +611,9 @@ class WindowsTray(TrayIcon):
 
         self.available = True
         self._running = True
-        self._poll_thread = threading.Thread(target=self._poll_loop, name="WinTrayPoll", daemon=True)
+        self._poll_thread = threading.Thread(
+            target=self._poll_loop, name="WinTrayPoll", daemon=True
+        )
         self._poll_thread.start()
 
     def _poll_loop(self) -> None:
@@ -595,8 +633,13 @@ class WindowsTray(TrayIcon):
         old = self.state
         self.state = new_state
         try:
-            if force or (old.icon_state, old.monitor) != (new_state.icon_state, new_state.monitor):
-                self._icon.icon = render_icon(new_state.icon_state, 64, new_state.monitor)
+            if force or (old.icon_state, old.monitor) != (
+                new_state.icon_state,
+                new_state.monitor,
+            ):
+                self._icon.icon = render_icon(
+                    new_state.icon_state, 64, new_state.monitor
+                )
             self._icon.title = f"Virtual Mic Cel\n{new_state.tooltip}"[:127]
             self._icon.update_menu()
         except Exception:

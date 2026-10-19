@@ -12,11 +12,19 @@ from virtual_mic_cel.network import DEFAULT_UDP_PORT
 
 def _print_status(resp: dict[str, object]) -> None:
     print(f"Estado Virtual Mic Cel (UDP {resp.get('ip')}:{resp.get('udp_port')}):")
-    print(f"  Micrófono Virtual : {'ACTIVO' if resp.get('virtual_mic_ready') else 'INACTIVO'} ({resp.get('device_label')})")
-    print(f"  Interfaz Gráfica  : {'Abierta' if resp.get('gui_active') else 'En 2do plano (0% GPU)'}")
-    print(f"  Monitor de Salida : {'Activado' if resp.get('monitor_enabled') else 'Desactivado'}")
+    print(
+        f"  Micrófono Virtual : {'ACTIVO' if resp.get('virtual_mic_ready') else 'INACTIVO'} ({resp.get('device_label')})"
+    )
+    print(
+        f"  Interfaz Gráfica  : {'Abierta' if resp.get('gui_active') else 'En 2do plano (0% GPU)'}"
+    )
+    print(
+        f"  Monitor de Salida : {'Activado' if resp.get('monitor_enabled') else 'Desactivado'}"
+    )
     print(f"  Silenciado (Mute) : {'Sí' if resp.get('mic_muted') else 'No'}")
-    print(f"  Tráfico Total     : {resp.get('total_packets')} paquetes ({resp.get('total_bytes')} bytes)")
+    print(
+        f"  Tráfico Total     : {resp.get('total_packets')} paquetes ({resp.get('total_bytes')} bytes)"
+    )
     devices = resp.get("devices")
     if isinstance(devices, list) and devices:
         print("  Dispositivos:")
@@ -141,7 +149,14 @@ def main() -> None:
     # By default on Linux/macOS/Windows, spawn detached session so closing the terminal
     # or closing the GUI window leaves the background service running cleanly.
     if not args.foreground:
-        cmd = [sys.executable, "-m", "virtual_mic_cel", "--foreground", "--port", str(args.port)]
+        cmd = [
+            sys.executable,
+            "-m",
+            "virtual_mic_cel",
+            "--foreground",
+            "--port",
+            str(args.port),
+        ]
         if args.background:
             cmd.append("--background")
         popen_kwargs: dict[str, object] = {}

@@ -25,11 +25,15 @@ class VirtualMicEngine:
     and optional real-time monitoring through the system's default audio output.
     """
 
-    def __init__(self, sample_rate: int = SAMPLE_RATE, channels: int = CHANNELS) -> None:
+    def __init__(
+        self, sample_rate: int = SAMPLE_RATE, channels: int = CHANNELS
+    ) -> None:
         self.sample_rate = sample_rate
         self.channels = channels
-        self.platform = "linux" if sys.platform.startswith("linux") else (
-            "windows" if sys.platform.startswith("win") else sys.platform
+        self.platform = (
+            "linux"
+            if sys.platform.startswith("linux")
+            else ("windows" if sys.platform.startswith("win") else sys.platform)
         )
 
         # User-controllable audio parameters
@@ -149,15 +153,15 @@ class VirtualMicEngine:
             self.virtual_mic_ready = True
             self.backend_name = "PipeWire / PulseAudio"
             self.device_label = f"{VIRTUAL_MIC_DESCRIPTION} ({VIRTUAL_SOURCE_NAME})"
-            self.status_message = (
-                f"Micrófono virtual activo: {VIRTUAL_MIC_DESCRIPTION} (48000 Hz, 16-bit, Mono)"
-            )
+            self.status_message = f"Micrófono virtual activo: {VIRTUAL_MIC_DESCRIPTION} (48000 Hz, 16-bit, Mono)"
             return True, self.status_message
         except Exception as exc:
             self._cleanup_virtual_mic_locked()
             self.virtual_mic_ready = False
             self.backend_name = "PipeWire / PulseAudio (Error)"
-            self.status_message = f"Error creando micrófono virtual en PipeWire/PulseAudio: {exc}"
+            self.status_message = (
+                f"Error creando micrófono virtual en PipeWire/PulseAudio: {exc}"
+            )
             return False, self.status_message
 
     def _start_linux_mic_pacat_locked(self) -> None:
@@ -220,7 +224,9 @@ class VirtualMicEngine:
             for idx, dev in enumerate(devices):
                 name = str(dev.get("name", ""))
                 max_out = int(dev.get("max_output_channels", 0))
-                if max_out > 0 and ("cable input" in name.lower() or "vb-audio" in name.lower()):
+                if max_out > 0 and (
+                    "cable input" in name.lower() or "vb-audio" in name.lower()
+                ):
                     cable_index = idx
                     cable_name = name
                     break
@@ -331,7 +337,10 @@ class VirtualMicEngine:
                 if self.platform == "linux":
                     if self._mic_pacat is None or self._mic_pacat.poll() is not None:
                         self._start_linux_mic_pacat_locked()
-                    if self._mic_pacat is not None and self._mic_pacat.stdin is not None:
+                    if (
+                        self._mic_pacat is not None
+                        and self._mic_pacat.stdin is not None
+                    ):
                         try:
                             self._mic_pacat.stdin.write(mic_bytes)
                         except BrokenPipeError:
@@ -345,9 +354,15 @@ class VirtualMicEngine:
             # Inject into System Audio Output Monitor if enabled
             if self.monitor_enabled and monitor_bytes is not None:
                 if self.platform == "linux" and shutil.which("pacat"):
-                    if self._monitor_pacat is None or self._monitor_pacat.poll() is not None:
+                    if (
+                        self._monitor_pacat is None
+                        or self._monitor_pacat.poll() is not None
+                    ):
                         self._start_linux_monitor_pacat_locked()
-                    if self._monitor_pacat is not None and self._monitor_pacat.stdin is not None:
+                    if (
+                        self._monitor_pacat is not None
+                        and self._monitor_pacat.stdin is not None
+                    ):
                         try:
                             self._monitor_pacat.stdin.write(monitor_bytes)
                         except BrokenPipeError:
@@ -365,13 +380,16 @@ class VirtualMicEngine:
         Spawns a background thread that sends a pleasant 440Hz/554Hz PCM test signal
         over UDP to 127.0.0.1:port so the user can verify the virtual mic and monitor.
         """
+
         def _worker() -> None:
             chunk_samples = 960  # 20ms at 48000Hz
             total_chunks = int((duration_sec * self.sample_rate) / chunk_samples)
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                     for i in range(total_chunks):
-                        t = (np.arange(chunk_samples) + i * chunk_samples) / float(self.sample_rate)
+                        t = (np.arange(chunk_samples) + i * chunk_samples) / float(
+                            self.sample_rate
+                        )
                         freq = 440.0 if i < (total_chunks // 2) else 554.37
                         # Smooth envelope at start/end
                         wave = np.sin(2.0 * np.pi * freq * t) * 0.35

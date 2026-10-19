@@ -8,15 +8,17 @@ from PIL import Image, ImageDraw
 
 # Background colors by state
 STATE_COLORS: dict[str, tuple[int, int, int, int]] = {
-    "idle": (70, 78, 96, 255),          # Gray: waiting for the phone
-    "streaming": (40, 175, 95, 255),    # Green: receiving audio
-    "muted": (200, 55, 65, 255),        # Red: virtual mic muted
-    "error": (220, 140, 30, 255),       # Orange: virtual mic not available
+    "idle": (70, 78, 96, 255),  # Gray: waiting for the phone
+    "streaming": (40, 175, 95, 255),  # Green: receiving audio
+    "muted": (200, 55, 65, 255),  # Red: virtual mic muted
+    "error": (220, 140, 30, 255),  # Orange: virtual mic not available
 }
 
 
 @lru_cache(maxsize=32)
-def render_icon(state: str = "idle", size: int = 64, monitor: bool = False) -> Image.Image:
+def render_icon(
+    state: str = "idle", size: int = 64, monitor: bool = False
+) -> Image.Image:
     """Draws a round microphone icon. Rendered at 4x and downscaled for anti-aliasing."""
     scale = 4
     s = size * scale
@@ -32,7 +34,9 @@ def render_icon(state: str = "idle", size: int = 64, monitor: bool = False) -> I
     # Mic capsule
     d.rounded_rectangle((24 * u, 11 * u, 40 * u, 37 * u), radius=8 * u, fill=white)
     # Holder (U arc)
-    d.arc((17 * u, 19 * u, 47 * u, 45 * u), start=0, end=180, fill=white, width=int(4 * u))
+    d.arc(
+        (17 * u, 19 * u, 47 * u, 45 * u), start=0, end=180, fill=white, width=int(4 * u)
+    )
     # Stem + base
     d.rectangle((30 * u, 44 * u, 34 * u, 51 * u), fill=white)
     d.rounded_rectangle((22 * u, 50 * u, 42 * u, 54 * u), radius=2 * u, fill=white)
@@ -44,7 +48,12 @@ def render_icon(state: str = "idle", size: int = 64, monitor: bool = False) -> I
 
     if monitor:
         # Small blue badge = monitor (listening through speakers) enabled
-        d.ellipse((44 * u, 2 * u, 62 * u, 20 * u), fill=(60, 140, 245, 255), outline=white, width=int(2 * u))
+        d.ellipse(
+            (44 * u, 2 * u, 62 * u, 20 * u),
+            fill=(60, 140, 245, 255),
+            outline=white,
+            width=int(2 * u),
+        )
 
     return img.resize((size, size), Image.LANCZOS)
 

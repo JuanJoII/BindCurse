@@ -14,7 +14,12 @@ from collections import deque
 import dearpygui.dearpygui as dpg
 
 from virtual_mic_cel.audio import VirtualMicEngine
-from virtual_mic_cel.network import DEFAULT_UDP_PORT, DeviceInfo, UDPAudioReceiver, get_local_ips
+from virtual_mic_cel.network import (
+    DEFAULT_UDP_PORT,
+    DeviceInfo,
+    UDPAudioReceiver,
+    get_local_ips,
+)
 from virtual_mic_cel.tray import TrayCallbacks, TrayIcon, TrayState, create_tray
 
 
@@ -196,7 +201,9 @@ class VirtualMicApp:
             with conn:
                 try:
                     conn.settimeout(0.5)
-                    cmd = conn.recv(256).decode("utf-8", errors="replace").strip().upper()
+                    cmd = (
+                        conn.recv(256).decode("utf-8", errors="replace").strip().upper()
+                    )
                     resp = self._handle_ipc_command(cmd)
                     conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
                 except Exception:
@@ -250,7 +257,9 @@ class VirtualMicApp:
         items = [f"{ip}  [{label}]" for label, ip in self.local_ips]
         self.selected_ip = self.local_ips[0][1] if self.local_ips else "127.0.0.1"
         if dpg.does_item_exist("ip_combo"):
-            dpg.configure_item("ip_combo", items=items, default_value=items[0] if items else "")
+            dpg.configure_item(
+                "ip_combo", items=items, default_value=items[0] if items else ""
+            )
         self._update_connection_banner()
 
     def _on_ip_combo_selected(self, _sender: int, app_data: str) -> None:
@@ -261,7 +270,10 @@ class VirtualMicApp:
 
     def _update_connection_banner(self) -> None:
         if dpg.does_item_exist("big_ip_port_text"):
-            dpg.set_value("big_ip_port_text", f"IP: {self.selected_ip}    |    Puerto UDP: {self.udp_port}")
+            dpg.set_value(
+                "big_ip_port_text",
+                f"IP: {self.selected_ip}    |    Puerto UDP: {self.udp_port}",
+            )
         if dpg.does_item_exist("copy_status_text"):
             dpg.set_value("copy_status_text", "")
 
@@ -306,7 +318,9 @@ class VirtualMicApp:
         self.receiver.clear_inactive_devices()
         self._rebuild_devices_table(self.receiver.get_devices_snapshot())
 
-    def _on_toggle_block_device(self, _sender: int, _app_data: object, user_data: str) -> None:
+    def _on_toggle_block_device(
+        self, _sender: int, _app_data: object, user_data: str
+    ) -> None:
         self.receiver.toggle_block_ip(user_data)
         self._rebuild_devices_table(self.receiver.get_devices_snapshot())
 
@@ -424,7 +438,10 @@ class VirtualMicApp:
             # --- 2. VIRTUAL MICROPHONE & SYSTEM MONITOR CONTROLS ---
             with dpg.child_window(height=255, border=True):
                 with dpg.group(horizontal=True):
-                    dpg.add_text("MICRÓFONO VIRTUAL Y MONITOREO DE AUDIO", color=(140, 185, 255, 255))
+                    dpg.add_text(
+                        "MICRÓFONO VIRTUAL Y MONITOREO DE AUDIO",
+                        color=(140, 185, 255, 255),
+                    )
                     dpg.add_spacer(width=20)
                     dpg.add_text("", tag="backend_text", color=(170, 175, 190, 255))
 
@@ -505,9 +522,16 @@ class VirtualMicApp:
             # --- 3. CONNECTED DEVICES TABLE ---
             with dpg.child_window(border=True):
                 with dpg.group(horizontal=True):
-                    dpg.add_text("DISPOSITIVOS CONECTADOS (CLIENTES UDP)", color=(140, 185, 255, 255))
+                    dpg.add_text(
+                        "DISPOSITIVOS CONECTADOS (CLIENTES UDP)",
+                        color=(140, 185, 255, 255),
+                    )
                     dpg.add_spacer(width=20)
-                    dpg.add_text("Total: 0 paquetes (0 B)", tag="total_traffic_text", color=(180, 190, 205, 255))
+                    dpg.add_text(
+                        "Total: 0 paquetes (0 B)",
+                        tag="total_traffic_text",
+                        color=(180, 190, 205, 255),
+                    )
                     dpg.add_spacer(width=20)
                     dpg.add_button(
                         label="Limpiar Inactivos",
@@ -524,13 +548,35 @@ class VirtualMicApp:
                     row_background=True,
                     resizable=True,
                 ):
-                    dpg.add_table_column(label="Dispositivo (IP:Puerto)", width_stretch=True, init_width_or_weight=1.4)
-                    dpg.add_table_column(label="Estado", width_stretch=True, init_width_or_weight=1.0)
-                    dpg.add_table_column(label="Nivel Audio", width_stretch=True, init_width_or_weight=1.1)
-                    dpg.add_table_column(label="Velocidad", width_stretch=True, init_width_or_weight=1.2)
-                    dpg.add_table_column(label="Datos Recibidos", width_stretch=True, init_width_or_weight=1.3)
-                    dpg.add_table_column(label="Última Señal", width_stretch=True, init_width_or_weight=0.9)
-                    dpg.add_table_column(label="Acción", width_fixed=True, init_width_or_weight=95)
+                    dpg.add_table_column(
+                        label="Dispositivo (IP:Puerto)",
+                        width_stretch=True,
+                        init_width_or_weight=1.4,
+                    )
+                    dpg.add_table_column(
+                        label="Estado", width_stretch=True, init_width_or_weight=1.0
+                    )
+                    dpg.add_table_column(
+                        label="Nivel Audio",
+                        width_stretch=True,
+                        init_width_or_weight=1.1,
+                    )
+                    dpg.add_table_column(
+                        label="Velocidad", width_stretch=True, init_width_or_weight=1.2
+                    )
+                    dpg.add_table_column(
+                        label="Datos Recibidos",
+                        width_stretch=True,
+                        init_width_or_weight=1.3,
+                    )
+                    dpg.add_table_column(
+                        label="Última Señal",
+                        width_stretch=True,
+                        init_width_or_weight=0.9,
+                    )
+                    dpg.add_table_column(
+                        label="Acción", width_fixed=True, init_width_or_weight=95
+                    )
 
         self._update_mic_status_ui()
         self._rebuild_devices_table(self.receiver.get_devices_snapshot())
@@ -602,9 +648,15 @@ class VirtualMicApp:
         devices = self.receiver.get_devices_snapshot()
 
         # Keep checkboxes in sync with changes made from the tray icon / CLI
-        if dpg.does_item_exist("monitor_checkbox") and dpg.get_value("monitor_checkbox") != self.audio.monitor_enabled:
+        if (
+            dpg.does_item_exist("monitor_checkbox")
+            and dpg.get_value("monitor_checkbox") != self.audio.monitor_enabled
+        ):
             dpg.set_value("monitor_checkbox", self.audio.monitor_enabled)
-        if dpg.does_item_exist("mute_checkbox") and dpg.get_value("mute_checkbox") != self.audio.mic_muted:
+        if (
+            dpg.does_item_exist("mute_checkbox")
+            and dpg.get_value("mute_checkbox") != self.audio.mic_muted
+        ):
             dpg.set_value("mute_checkbox", self.audio.mic_muted)
 
         peak = self.receiver.current_peak
@@ -646,9 +698,14 @@ class VirtualMicApp:
                 if dpg.does_item_exist(f"dev_level_{ip_tag}"):
                     lvl = min(1.0, dev.peak_level)
                     dpg.set_value(f"dev_level_{ip_tag}", lvl)
-                    dpg.configure_item(f"dev_level_{ip_tag}", overlay=f"{int(lvl * 100)}%")
+                    dpg.configure_item(
+                        f"dev_level_{ip_tag}", overlay=f"{int(lvl * 100)}%"
+                    )
                 if dpg.does_item_exist(f"dev_rate_{ip_tag}"):
-                    dpg.set_value(f"dev_rate_{ip_tag}", f"{dev.kbps:.0f} kbps ({dev.pps:.0f} pkt/s)")
+                    dpg.set_value(
+                        f"dev_rate_{ip_tag}",
+                        f"{dev.kbps:.0f} kbps ({dev.pps:.0f} pkt/s)",
+                    )
                 if dpg.does_item_exist(f"dev_bytes_{ip_tag}"):
                     dpg.set_value(
                         f"dev_bytes_{ip_tag}",
@@ -684,7 +741,11 @@ class VirtualMicApp:
             dpg.set_primary_window("primary_window", True)
 
             last_ui_update = 0.0
-            while dpg.is_dearpygui_running() and not self._quit_requested and not self._hide_requested:
+            while (
+                dpg.is_dearpygui_running()
+                and not self._quit_requested
+                and not self._hide_requested
+            ):
                 now = time.time()
                 if now - last_ui_update >= 0.05:
                     self._update_frame()
