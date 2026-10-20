@@ -27,7 +27,9 @@ def test_settings_save_and_load():
 
         # 1. Archivo inexistente -> Valores por defecto
         s1 = UserSettings.load(config_path)
-        print(f"[1] Valores por defecto cargados: gain={s1.mic_gain}, port={s1.udp_port}")
+        print(
+            f"[1] Valores por defecto cargados: gain={s1.mic_gain}, port={s1.udp_port}"
+        )
         assert s1.mic_gain == 1.0
         assert s1.monitor_volume == 1.0
         assert not s1.monitor_enabled
@@ -59,7 +61,9 @@ def test_settings_save_and_load():
 
         # 3. Recarga desde disco
         s2 = UserSettings.load(config_path)
-        print(f"[3] Configuración recargada de disco: gain={s2.mic_gain}, mon_vol={s2.monitor_volume}")
+        print(
+            f"[3] Configuración recargada de disco: gain={s2.mic_gain}, mon_vol={s2.monitor_volume}"
+        )
         assert s2.mic_gain == 1.85
         assert s2.monitor_volume == 0.65
         assert s2.monitor_enabled is True
@@ -88,7 +92,9 @@ def test_settings_save_and_load():
         assert s_corrupted.mic_gain == 1.0
         assert s_corrupted.udp_port == DEFAULT_UDP_PORT
 
-    print("\n[✓] TEST SUPERADO: Persistencia atómica, debouncing y fallback validados.\n")
+    print(
+        "\n[✓] TEST SUPERADO: Persistencia atómica, debouncing y fallback validados.\n"
+    )
 
 
 def test_app_integration():
@@ -108,20 +114,32 @@ def test_app_integration():
         real_settings.save()
 
         app = VirtualMicApp(udp_port=5995)
-        print(f"[1] VirtualMicApp inicializada con ganancia: {app.audio.mic_gain * 100:.0f}%")
-        print(f"[2] VirtualMicApp volumen monitor: {app.audio.monitor_volume * 100:.0f}%")
+        print(
+            f"[1] VirtualMicApp inicializada con ganancia: {app.audio.mic_gain * 100:.0f}%"
+        )
+        print(
+            f"[2] VirtualMicApp volumen monitor: {app.audio.monitor_volume * 100:.0f}%"
+        )
         print(f"[3] VirtualMicApp mic silenciado: {app.audio.mic_muted}")
 
-        assert abs(app.audio.mic_gain - 1.77) < 1e-3, "La ganancia debe coincidir con la guardada"
-        assert abs(app.audio.monitor_volume - 0.42) < 1e-3, "El volumen monitor debe coincidir con el guardado"
-        assert app.audio.mic_muted is True, "El estado mute debe coincidir con el guardado"
+        assert abs(app.audio.mic_gain - 1.77) < 1e-3, (
+            "La ganancia debe coincidir con la guardada"
+        )
+        assert abs(app.audio.monitor_volume - 0.42) < 1e-3, (
+            "El volumen monitor debe coincidir con el guardado"
+        )
+        assert app.audio.mic_muted is True, (
+            "El estado mute debe coincidir con el guardado"
+        )
 
         # Simular ajuste de usuario en la UI
         app._on_mic_gain_changed(0, 220.0)
         app.settings.flush()
 
         reloaded = UserSettings.load()
-        print(f"[4] Nueva ganancia persistida tras cambio en UI: {reloaded.mic_gain * 100:.0f}%")
+        print(
+            f"[4] Nueva ganancia persistida tras cambio en UI: {reloaded.mic_gain * 100:.0f}%"
+        )
         assert abs(reloaded.mic_gain - 2.20) < 1e-3
 
     finally:
@@ -131,7 +149,9 @@ def test_app_integration():
         real_settings.mic_muted = False
         real_settings.save()
 
-    print("\n[✓] TEST SUPERADO: Integración completa de persistencia con VirtualMicApp.\n")
+    print(
+        "\n[✓] TEST SUPERADO: Integración completa de persistencia con VirtualMicApp.\n"
+    )
 
 
 if __name__ == "__main__":

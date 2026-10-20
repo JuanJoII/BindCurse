@@ -11,7 +11,9 @@ if TYPE_CHECKING:
 class WindowsAudioBackend:
     """Manages virtual mic via VB-Cable and monitoring via PortAudio/sounddevice."""
 
-    def __init__(self, sample_rate: int = SAMPLE_RATE, channels: int = CHANNELS) -> None:
+    def __init__(
+        self, sample_rate: int = SAMPLE_RATE, channels: int = CHANNELS
+    ) -> None:
         self.sample_rate = sample_rate
         self.channels = channels
         self.sd_mic_stream: Any = None

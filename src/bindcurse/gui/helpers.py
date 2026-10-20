@@ -74,4 +74,3 @@ def terminate_dpg_glfw() -> None:
             lib.glfwTerminate()
     except Exception:
         pass
-

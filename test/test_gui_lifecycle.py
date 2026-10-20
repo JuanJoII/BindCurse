@@ -16,7 +16,9 @@ from bindcurse.gui.helpers import terminate_dpg_glfw
 
 def get_hyprland_windows() -> list[str]:
     try:
-        out = subprocess.check_output(["hyprctl", "clients"], stderr=subprocess.DEVNULL).decode("utf-8")
+        out = subprocess.check_output(
+            ["hyprctl", "clients"], stderr=subprocess.DEVNULL
+        ).decode("utf-8")
         return [line for line in out.splitlines() if "title:" in line]
     except Exception:
         return []
@@ -74,7 +76,9 @@ def test_session_lifecycle():
 
     matching_titles = [l for l in get_hyprland_windows() if title in l]
     print(f"    Número de ventanas detectadas tras reabrir: {len(matching_titles)}")
-    assert len(matching_titles) == 1, f"Error: Se esperaban 1 ventana, se encontraron {len(matching_titles)}"
+    assert len(matching_titles) == 1, (
+        f"Error: Se esperaban 1 ventana, se encontraron {len(matching_titles)}"
+    )
 
     print("    Cerrando segunda sesión...")
     dpg.stop_dearpygui()
@@ -89,7 +93,9 @@ def test_session_lifecycle():
     print(f"    Ventana detectada en compositor tras segundo cierre: {in_hypr_after_2}")
     assert not in_hypr_after_2, "Error: La ventana no se destruyó en el segundo cierre!"
 
-    print("\n[✓] TEST SUPERADO: Cierre, destrucción limpia y reapertura funcionan correctamente.\n")
+    print(
+        "\n[✓] TEST SUPERADO: Cierre, destrucción limpia y reapertura funcionan correctamente.\n"
+    )
 
 
 if __name__ == "__main__":

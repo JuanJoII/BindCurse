@@ -58,9 +58,7 @@ class GuiSessionWindow:
                 (str(item[0]), str(item[1])) for item in raw_ips if len(item) >= 2
             ]
         self.selected_ip = str(
-            resp.get(
-                "ip", self.local_ips[0][1] if self.local_ips else "127.0.0.1"
-            )
+            resp.get("ip", self.local_ips[0][1] if self.local_ips else "127.0.0.1")
         )
         items = [f"{ip}  [{label}]" for label, ip in self.local_ips]
         if dpg.does_item_exist("ip_combo"):
@@ -207,9 +205,7 @@ class GuiSessionWindow:
         for dev in devices:
             ip = str(dev.get("ip", ""))
             ip_tag = ip.replace(".", "_")
-            display_name = str(
-                dev.get("display_name") or dev.get("address") or ip
-            )
+            display_name = str(dev.get("display_name") or dev.get("address") or ip)
             peak_level = float(dev.get("peak_level", 0.0))
             kbps = float(dev.get("kbps", 0.0))
             pps = float(dev.get("pps", 0.0))
@@ -222,9 +218,7 @@ class GuiSessionWindow:
             with dpg.table_row(parent="devices_table"):
                 dpg.add_text(display_name, tag=f"dev_addr_{ip_tag}")
                 status_str, status_color = self._device_status_label(dev)
-                dpg.add_text(
-                    status_str, tag=f"dev_status_{ip_tag}", color=status_color
-                )
+                dpg.add_text(status_str, tag=f"dev_status_{ip_tag}", color=status_color)
                 dpg.add_progress_bar(
                     default_value=min(1.0, peak_level),
                     width=-1,
@@ -308,9 +302,7 @@ class GuiSessionWindow:
                         label="Actualizar IPs",
                         callback=lambda: self._refresh_ips_callback(),
                     )
-                    dpg.add_text(
-                        "", tag="copy_status_text", color=(100, 230, 150, 255)
-                    )
+                    dpg.add_text("", tag="copy_status_text", color=(100, 230, 150, 255))
 
             # --- 2. VIRTUAL MICROPHONE & SYSTEM MONITOR CONTROLS ---
             with dpg.child_window(height=255, border=True):
@@ -520,17 +512,13 @@ class GuiSessionWindow:
             for dev in devices:
                 ip = str(dev.get("ip", ""))
                 ip_tag = ip.replace(".", "_")
-                display_name = str(
-                    dev.get("display_name") or dev.get("address") or ip
-                )
+                display_name = str(dev.get("display_name") or dev.get("address") or ip)
                 if dpg.does_item_exist(f"dev_addr_{ip_tag}"):
                     dpg.set_value(f"dev_addr_{ip_tag}", display_name)
                 if dpg.does_item_exist(f"dev_status_{ip_tag}"):
                     status_str, status_color = self._device_status_label(dev)
                     dpg.set_value(f"dev_status_{ip_tag}", status_str)
-                    dpg.configure_item(
-                        f"dev_status_{ip_tag}", color=status_color
-                    )
+                    dpg.configure_item(f"dev_status_{ip_tag}", color=status_color)
                 if dpg.does_item_exist(f"dev_level_{ip_tag}"):
                     lvl = min(1.0, float(dev.get("peak_level", 0.0)))
                     dpg.set_value(f"dev_level_{ip_tag}", lvl)

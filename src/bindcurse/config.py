@@ -37,7 +37,9 @@ VIRTUAL_MIC_DESCRIPTION: str = "BindCurse_Mic"
 # Platform detection
 IS_LINUX: bool = sys.platform.startswith("linux")
 IS_WINDOWS: bool = sys.platform.startswith("win")
-CURRENT_PLATFORM: str = "linux" if IS_LINUX else ("windows" if IS_WINDOWS else sys.platform)
+CURRENT_PLATFORM: str = (
+    "linux" if IS_LINUX else ("windows" if IS_WINDOWS else sys.platform)
+)
 
 
 def get_config_dir() -> Path:
@@ -77,9 +79,7 @@ class UserSettings:
     _lock: threading.Lock = field(
         default_factory=threading.Lock, init=False, repr=False
     )
-    _save_timer: threading.Timer | None = field(
-        default=None, init=False, repr=False
-    )
+    _save_timer: threading.Timer | None = field(default=None, init=False, repr=False)
 
     @classmethod
     def load(cls, config_path: Path | None = None) -> UserSettings:
@@ -138,9 +138,7 @@ class UserSettings:
         with self._lock:
             if self._save_timer is not None:
                 self._save_timer.cancel()
-            timer = threading.Timer(
-                delay, self._write_to_disk, args=(config_path,)
-            )
+            timer = threading.Timer(delay, self._write_to_disk, args=(config_path,))
             timer.daemon = True
             self._save_timer = timer
             timer.start()
@@ -159,4 +157,3 @@ class UserSettings:
             tmp_path.replace(path)
         except Exception:
             pass
-

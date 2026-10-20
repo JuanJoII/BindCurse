@@ -40,10 +40,18 @@ def _print_status(resp: dict[str, object]) -> None:
         print("  Dispositivos:")
         for d in devices:
             if isinstance(d, dict):
-                estado = d.get("state") or ("TRANSMITIENDO" if d.get("active") else "INACTIVO")
-                name_str = f" [{d.get('name')}]" if d.get("name") and d.get("name") not in ("Dispositivo", "Cliente") else ""
+                estado = d.get("state") or (
+                    "TRANSMITIENDO" if d.get("active") else "INACTIVO"
+                )
+                name_str = (
+                    f" [{d.get('name')}]"
+                    if d.get("name") and d.get("name") not in ("Dispositivo", "Cliente")
+                    else ""
+                )
                 lost_str = f", {d.get('lost')} perdidos" if d.get("lost") else ""
-                print(f"    - {d.get('address')}{name_str} [{estado}] ({d.get('packets')} pkts{lost_str})")
+                print(
+                    f"    - {d.get('address')}{name_str} [{estado}] ({d.get('packets')} pkts{lost_str})"
+                )
     else:
         print("  Dispositivos      : Ninguno conectado aún")
 
@@ -183,8 +191,7 @@ def main() -> None:
             if os.path.isfile(pythonw):
                 cmd[0] = pythonw
             popen_kwargs["creationflags"] = (
-                subprocess.DETACHED_PROCESS
-                | subprocess.CREATE_NEW_PROCESS_GROUP
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
             )
         else:
             popen_kwargs["start_new_session"] = True

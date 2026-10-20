@@ -37,9 +37,7 @@ def _scale_pcm_s16le(raw_bytes: bytes, gain: float) -> bytes:
     scaled = array.array(
         "h",
         (
-            -32768
-            if (v := int(s * gain)) < -32768
-            else (32767 if v > 32767 else v)
+            -32768 if (v := int(s * gain)) < -32768 else (32767 if v > 32767 else v)
             for s in arr
         ),
     )
@@ -96,14 +94,18 @@ class VirtualMicEngine:
             if IS_LINUX and self._linux_backend is not None:
                 ok, label, msg = self._linux_backend.setup()
                 self.virtual_mic_ready = ok
-                self.backend_name = "PipeWire / PulseAudio" if ok else "PipeWire / PulseAudio (Error)"
+                self.backend_name = (
+                    "PipeWire / PulseAudio" if ok else "PipeWire / PulseAudio (Error)"
+                )
                 self.device_label = label
                 self.status_message = msg
                 return ok, msg
             elif IS_WINDOWS and self._windows_backend is not None:
                 ok, label, msg = self._windows_backend.setup()
                 self.virtual_mic_ready = ok
-                self.backend_name = "VB-Audio Virtual Cable" if ok else "VB-Cable (No detectado)"
+                self.backend_name = (
+                    "VB-Audio Virtual Cable" if ok else "VB-Cable (No detectado)"
+                )
                 self.device_label = label
                 self.status_message = msg
                 return ok, msg
@@ -147,7 +149,10 @@ class VirtualMicEngine:
         monitor_bytes: bytes | None = None
         if self.monitor_enabled:
             if abs(self.monitor_volume - 1.0) > 1e-3:
-                if abs(self.monitor_volume - self.mic_gain) <= 1e-4 and not self.mic_muted:
+                if (
+                    abs(self.monitor_volume - self.mic_gain) <= 1e-4
+                    and not self.mic_muted
+                ):
                     monitor_bytes = mic_bytes
                 else:
                     monitor_bytes = _scale_pcm_s16le(raw_bytes, self.monitor_volume)
@@ -181,7 +186,10 @@ class VirtualMicEngine:
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                     # Optional handshake before stream
-                    sock.sendto(b"BINDCURSE_HELLO|1|48000|16|1|LocalTestTone", ("127.0.0.1", port))
+                    sock.sendto(
+                        b"BINDCURSE_HELLO|1|48000|16|1|LocalTestTone",
+                        ("127.0.0.1", port),
+                    )
                     for i in range(total_chunks):
                         freq = 440.0 if i < (total_chunks // 2) else 554.37
                         step = 2.0 * math.pi * freq / float(self.sample_rate)

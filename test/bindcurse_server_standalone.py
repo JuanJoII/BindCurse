@@ -30,8 +30,9 @@ DEFAULT_PORT = 9920
 SAMPLE_RATE = 48000
 CHANNELS = 1
 BYTES_PER_SAMPLE = 2  # 16-bit signed LE
-AUDIO_MAGIC = b'BCPM'
+AUDIO_MAGIC = b"BCPM"
 AUDIO_HEADER_SIZE = 8
+
 
 def get_hostname():
     try:
@@ -39,12 +40,13 @@ def get_hostname():
     except Exception:
         return "BindCurse Altar"
 
+
 def print_vu_meter(pcm_data, width=30):
     """Calcula y muestra en consola el nivel RMS de la ráfaga de audio."""
     if not pcm_data or len(pcm_data) < 2:
         return
     count = len(pcm_data) // 2
-    samples = struct.unpack(f"<{count}h", pcm_data[:count*2])
+    samples = struct.unpack(f"<{count}h", pcm_data[: count * 2])
     sum_sq = sum(s * s for s in samples)
     rms = (sum_sq / count) ** 0.5
     normalized = min(1.0, rms / 32768.0)
@@ -54,17 +56,46 @@ def print_vu_meter(pcm_data, width=30):
     sys.stdout.write(f"\r[VU] [{meter}] {peak_db:6.1f} dBFS | Muestras: {count}")
     sys.stdout.flush()
 
+
 def math_log10(x):
     import math
+
     return math.log10(max(1e-5, x))
+
 
 def main():
     parser = argparse.ArgumentParser(description="BindCurse UDP Audio Server")
-    parser.add_argument("-p", "--port", type=int, default=DEFAULT_PORT, help=f"Puerto UDP a escuchar (por defecto: {DEFAULT_PORT})")
-    parser.add_argument("-b", "--bind", type=str, default="0.0.0.0", help="Dirección IP de enlace (por defecto: 0.0.0.0)")
-    parser.add_argument("-o", "--output", type=str, default=None, help="Ruta de archivo .wav para grabar la sesión")
-    parser.add_argument("--play", action="store_true", help="Reproducir audio en vivo por los altavoces (requiere pyaudio o sounddevice)")
-    parser.add_argument("--vu", action="store_true", help="Mostrar medidor de VU en tiempo real en la terminal")
+    parser.add_argument(
+        "-p",
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=f"Puerto UDP a escuchar (por defecto: {DEFAULT_PORT})",
+    )
+    parser.add_argument(
+        "-b",
+        "--bind",
+        type=str,
+        default="0.0.0.0",
+        help="Dirección IP de enlace (por defecto: 0.0.0.0)",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default=None,
+        help="Ruta de archivo .wav para grabar la sesión",
+    )
+    parser.add_argument(
+        "--play",
+        action="store_true",
+        help="Reproducir audio en vivo por los altavoces (requiere pyaudio o sounddevice)",
+    )
+    parser.add_argument(
+        "--vu",
+        action="store_true",
+        help="Mostrar medidor de VU en tiempo real en la terminal",
+    )
     args = parser.parse_args()
 
     # Audio playback setup (optional)
@@ -72,28 +103,32 @@ def main():
     if args.play:
         try:
             import pyaudio
+
             p = pyaudio.PyAudio()
             audio_stream = p.open(
                 format=pyaudio.paInt16,
                 channels=CHANNELS,
                 rate=SAMPLE_RATE,
                 output=True,
-                frames_per_buffer=960
+                frames_per_buffer=960,
             )
             print("[AUDIO] Salida de altavoces inicializada con PyAudio.")
         except ImportError:
             try:
                 import sounddevice as sd
+
                 audio_stream = sd.OutputStream(
                     samplerate=SAMPLE_RATE,
                     channels=CHANNELS,
-                    dtype='int16',
-                    blocksize=960
+                    dtype="int16",
+                    blocksize=960,
                 )
                 audio_stream.start()
                 print("[AUDIO] Salida de altavoces inicializada con sounddevice.")
             except ImportError:
-                print("[AVISO] Para escuchar el audio en vivo, instala 'pyaudio' o 'sounddevice':")
+                print(
+                    "[AVISO] Para escuchar el audio en vivo, instala 'pyaudio' o 'sounddevice':"
+                )
                 print("        pip install sounddevice numpy")
 
     # WAV recording setup (optional)
@@ -115,7 +150,9 @@ def main():
     try:
         sock.bind((args.bind, args.port))
     except Exception as e:
-        print(f"[ERROR FATAL] No se pudo vincular al puerto UDP {args.bind}:{args.port} -> {e}")
+        print(
+            f"[ERROR FATAL] No se pudo vincular al puerto UDP {args.bind}:{args.port} -> {e}"
+        )
         sys.exit(1)
 
     host_name = get_hostname()
@@ -155,7 +192,9 @@ def main():
                     if cmd == "BINDCURSE_DISCOVER":
                         resp = f"BINDCURSE_HERE|{host_name}|{os_name}|{args.port}"
                         sock.sendto(resp.encode("utf-8"), addr)
-                        print(f"[DISCOVERY] Sonda recibida de {addr[0]}:{addr[1]} -> Respondido HERE")
+                        print(
+                            f"[DISCOVERY] Sonda recibida de {addr[0]}:{addr[1]} -> Respondido HERE"
+                        )
 
                     # 2. Handshake: BINDCURSE_HELLO|<ver>|<sr>|<bits>|<ch>|<clientName>
                     elif cmd == "BINDCURSE_HELLO":
@@ -168,8 +207,12 @@ def main():
                         start_time = time.time()
                         resp = f"BINDCURSE_ACK|{host_name}|{os_name}"
                         sock.sendto(resp.encode("utf-8"), addr)
-                        print(f"\n[PACTO SELLADO] Nuevo enlace con {client_name} en {addr[0]}:{addr[1]}")
-                        print(f"[AUDIO STREAM] Esperando flujo de audio PCM 16-bit 48kHz...")
+                        print(
+                            f"\n[PACTO SELLADO] Nuevo enlace con {client_name} en {addr[0]}:{addr[1]}"
+                        )
+                        print(
+                            f"[AUDIO STREAM] Esperando flujo de audio PCM 16-bit 48kHz..."
+                        )
 
                     # 3. Ping: BINDCURSE_PING|<seq>
                     elif cmd == "BINDCURSE_PING":
@@ -179,7 +222,9 @@ def main():
 
                     # 4. Bye: BINDCURSE_BYE
                     elif cmd == "BINDCURSE_BYE":
-                        print(f"\n[DESVINCULADO] El cliente {addr[0]}:{addr[1]} ha finalizado la sesión.")
+                        print(
+                            f"\n[DESVINCULADO] El cliente {addr[0]}:{addr[1]} ha finalizado la sesión."
+                        )
                         if current_client == addr:
                             current_client = None
 
@@ -205,7 +250,7 @@ def main():
                 # Live playback
                 if audio_stream:
                     try:
-                        if hasattr(audio_stream, 'write'):
+                        if hasattr(audio_stream, "write"):
                             audio_stream.write(pcm_data)
                     except Exception:
                         pass
@@ -222,7 +267,7 @@ def main():
             elif current_client and addr[0] == current_client[0]:
                 total_packets += 1
                 total_bytes += len(data)
-                if audio_stream and hasattr(audio_stream, 'write'):
+                if audio_stream and hasattr(audio_stream, "write"):
                     audio_stream.write(data)
                 if wav_file:
                     wav_file.writeframes(data)
@@ -242,7 +287,10 @@ def main():
                 audio_stream.close()
             except Exception:
                 pass
-        print(f"[RESUMEN] Total paquetes: {total_packets} | Perdidos: {lost_packets} | Bytes: {total_bytes}")
+        print(
+            f"[RESUMEN] Total paquetes: {total_packets} | Perdidos: {lost_packets} | Bytes: {total_bytes}"
+        )
+
 
 if __name__ == "__main__":
     main()

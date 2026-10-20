@@ -15,12 +15,32 @@ import struct
 import time
 import math
 
+
 def main():
     parser = argparse.ArgumentParser(description="Simulador de cliente móvil BindCurse")
-    parser.add_argument("-H", "--host", default="127.0.0.1", help="IP del servidor (por defecto: 127.0.0.1)")
-    parser.add_argument("-p", "--port", type=int, default=5005, help="Puerto UDP del servidor (por defecto: 5005)")
-    parser.add_argument("-n", "--name", default="FlutterPhone_Test", help="Nombre del cliente móvil")
-    parser.add_argument("-d", "--duration", type=float, default=5.0, help="Duración del audio de prueba en segundos")
+    parser.add_argument(
+        "-H",
+        "--host",
+        default="127.0.0.1",
+        help="IP del servidor (por defecto: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "-p",
+        "--port",
+        type=int,
+        default=5005,
+        help="Puerto UDP del servidor (por defecto: 5005)",
+    )
+    parser.add_argument(
+        "-n", "--name", default="FlutterPhone_Test", help="Nombre del cliente móvil"
+    )
+    parser.add_argument(
+        "-d",
+        "--duration",
+        type=float,
+        default=5.0,
+        help="Duración del audio de prueba en segundos",
+    )
     args = parser.parse_args()
 
     target = (args.host, args.port)
@@ -39,7 +59,9 @@ def main():
     sock.sendto(b"BINDCURSE_DISCOVER", target)
     try:
         data, addr = sock.recvfrom(1024)
-        print(f"    <- Respuesta recibida de {addr}: {data.decode('utf-8', errors='replace')}")
+        print(
+            f"    <- Respuesta recibida de {addr}: {data.decode('utf-8', errors='replace')}"
+        )
     except socket.timeout:
         print("    [!] Tiempo de espera agotado para DISCOVER")
 
@@ -49,7 +71,9 @@ def main():
     sock.sendto(hello_msg.encode("utf-8"), target)
     try:
         data, addr = sock.recvfrom(1024)
-        print(f"    <- Respuesta recibida de {addr}: {data.decode('utf-8', errors='replace')}")
+        print(
+            f"    <- Respuesta recibida de {addr}: {data.decode('utf-8', errors='replace')}"
+        )
     except socket.timeout:
         print("    [!] Tiempo de espera agotado para HELLO")
 
@@ -65,7 +89,9 @@ def main():
         print("    [!] Tiempo de espera agotado para PING")
 
     # 4. Stream Audio Packets with BCPM header
-    print(f"\n[4] Transmitiendo audio PCM 48kHz mono con cabecera BCPM ({args.duration}s)...")
+    print(
+        f"\n[4] Transmitiendo audio PCM 48kHz mono con cabecera BCPM ({args.duration}s)..."
+    )
     sample_rate = 48000
     chunk_samples = 960  # 20ms
     total_chunks = int((args.duration * sample_rate) / chunk_samples)
@@ -73,7 +99,12 @@ def main():
     for seq in range(total_chunks):
         sine_bytes = bytearray()
         for i in range(chunk_samples):
-            sample_val = int(math.sin(2.0 * math.pi * 440.0 * (seq * chunk_samples + i) / sample_rate) * 16000.0)
+            sample_val = int(
+                math.sin(
+                    2.0 * math.pi * 440.0 * (seq * chunk_samples + i) / sample_rate
+                )
+                * 16000.0
+            )
             sine_bytes.extend(struct.pack("<h", sample_val))
 
         packet = b"BCPM" + struct.pack("<I", seq) + sine_bytes
@@ -88,6 +119,7 @@ def main():
     print("    Sesión cerrada correctamente.")
 
     sock.close()
+
 
 if __name__ == "__main__":
     main()

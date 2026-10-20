@@ -60,7 +60,9 @@ class DeviceInfo:
 
     @property
     def is_active(self) -> bool:
-        return (time.time() - self.last_seen) < 2.5 and self.session_state != "DESCONECTADO"
+        return (
+            time.time() - self.last_seen
+        ) < 2.5 and self.session_state != "DESCONECTADO"
 
 
 def get_local_ips() -> List[Tuple[str, str]]:
@@ -149,7 +151,9 @@ class UDPAudioReceiver:
             except OSError:
                 pass
             try:
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, DEFAULT_BUFFER_SIZE)
+                sock.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_RCVBUF, DEFAULT_BUFFER_SIZE
+                )
             except OSError:
                 pass
             sock.bind(("0.0.0.0", self.port))

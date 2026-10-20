@@ -18,7 +18,9 @@ PACAT_IDLE_TIMEOUT: float = 5.0
 class LinuxAudioBackend:
     """Manages virtual mic and monitor using PipeWire/PulseAudio via pactl/pacat."""
 
-    def __init__(self, sample_rate: int = SAMPLE_RATE, channels: int = CHANNELS) -> None:
+    def __init__(
+        self, sample_rate: int = SAMPLE_RATE, channels: int = CHANNELS
+    ) -> None:
         self.sample_rate = sample_rate
         self.channels = channels
         self.sink_module_id: str | None = None
@@ -112,7 +114,11 @@ class LinuxAudioBackend:
             return True, device_label, msg
         except Exception as exc:
             self.cleanup()
-            return False, "Error", f"Error creando micrófono virtual en PipeWire/PulseAudio: {exc}"
+            return (
+                False,
+                "Error",
+                f"Error creando micrófono virtual en PipeWire/PulseAudio: {exc}",
+            )
 
     def _reset_idle_timer(self) -> None:
         if self._idle_timer is not None:
