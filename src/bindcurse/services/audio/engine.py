@@ -121,9 +121,8 @@ class VirtualMicEngine:
                 if self._windows_backend:
                     self._windows_backend.stop_monitor()
             else:
-                if self._linux_backend:
-                    self._linux_backend.start_monitor_pacat()
-                elif self._windows_backend:
+                # On Linux, monitor_pacat starts on-demand when audio packets arrive
+                if self._windows_backend:
                     self._windows_backend.ensure_monitor()
 
     def process_audio_chunk(self, raw_bytes: bytes, _addr: tuple[str, int]) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
 
 from bindcurse.config import (
     CHANNELS,
@@ -10,6 +11,8 @@ from bindcurse.config import (
     VIRTUAL_SINK_NAME,
     VIRTUAL_SOURCE_NAME,
 )
+
+PACAT_IDLE_TIMEOUT: float = 5.0
 
 
 class LinuxAudioBackend:
@@ -22,6 +25,8 @@ class LinuxAudioBackend:
         self.source_module_id: str | None = None
         self.mic_pacat: subprocess.Popen[bytes] | None = None
         self.monitor_pacat: subprocess.Popen[bytes] | None = None
+        self._idle_timer: threading.Timer | None = None
+        self._lock = threading.Lock()
 
     def is_available(self) -> bool:
         return bool(shutil.which("pactl") and shutil.which("pacat"))
@@ -101,14 +106,27 @@ class LinuxAudioBackend:
             ).strip()
             self.source_module_id = src_out
 
-            self.start_mic_pacat()
-
+            # pacat is started on demand when audio packets arrive and closed when idle
             device_label = f"{VIRTUAL_MIC_DESCRIPTION} ({VIRTUAL_SOURCE_NAME})"
             msg = f"Micrófono virtual activo: {VIRTUAL_MIC_DESCRIPTION} (48000 Hz, 16-bit, Mono)"
             return True, device_label, msg
         except Exception as exc:
             self.cleanup()
             return False, "Error", f"Error creando micrófono virtual en PipeWire/PulseAudio: {exc}"
+
+    def _reset_idle_timer(self) -> None:
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+        timer = threading.Timer(PACAT_IDLE_TIMEOUT, self._on_idle_timeout)
+        timer.daemon = True
+        self._idle_timer = timer
+        timer.start()
+
+    def _on_idle_timeout(self) -> None:
+        with self._lock:
+            self._idle_timer = None
+            self.stop_mic_pacat()
+            self.stop_monitor_pacat()
 
     def start_mic_pacat(self) -> None:
         if self.mic_pacat is not None and self.mic_pacat.poll() is None:
@@ -131,14 +149,27 @@ class LinuxAudioBackend:
             bufsize=0,
         )
 
-    def write_mic(self, mic_bytes: bytes) -> None:
-        if self.mic_pacat is None or self.mic_pacat.poll() is not None:
-            self.start_mic_pacat()
-        if self.mic_pacat is not None and self.mic_pacat.stdin is not None:
+    def stop_mic_pacat(self) -> None:
+        if self.mic_pacat is not None:
             try:
-                self.mic_pacat.stdin.write(mic_bytes)
-            except BrokenPipeError:
+                if self.mic_pacat.stdin:
+                    self.mic_pacat.stdin.close()
+                self.mic_pacat.terminate()
+                self.mic_pacat.wait(timeout=0.5)
+            except Exception:
+                pass
+            self.mic_pacat = None
+
+    def write_mic(self, mic_bytes: bytes) -> None:
+        with self._lock:
+            if self.mic_pacat is None or self.mic_pacat.poll() is not None:
                 self.start_mic_pacat()
+            if self.mic_pacat is not None and self.mic_pacat.stdin is not None:
+                try:
+                    self.mic_pacat.stdin.write(mic_bytes)
+                except BrokenPipeError:
+                    self.start_mic_pacat()
+            self._reset_idle_timer()
 
     def start_monitor_pacat(self) -> None:
         if self.monitor_pacat is not None and self.monitor_pacat.poll() is None:
@@ -172,26 +203,23 @@ class LinuxAudioBackend:
             self.monitor_pacat = None
 
     def write_monitor(self, monitor_bytes: bytes) -> None:
-        if self.monitor_pacat is None or self.monitor_pacat.poll() is not None:
-            self.start_monitor_pacat()
-        if self.monitor_pacat is not None and self.monitor_pacat.stdin is not None:
-            try:
-                self.monitor_pacat.stdin.write(monitor_bytes)
-            except BrokenPipeError:
+        with self._lock:
+            if self.monitor_pacat is None or self.monitor_pacat.poll() is not None:
                 self.start_monitor_pacat()
+            if self.monitor_pacat is not None and self.monitor_pacat.stdin is not None:
+                try:
+                    self.monitor_pacat.stdin.write(monitor_bytes)
+                except BrokenPipeError:
+                    self.start_monitor_pacat()
+            self._reset_idle_timer()
 
     def cleanup(self) -> None:
-        if self.mic_pacat is not None:
-            try:
-                if self.mic_pacat.stdin:
-                    self.mic_pacat.stdin.close()
-                self.mic_pacat.terminate()
-                self.mic_pacat.wait(timeout=0.5)
-            except Exception:
-                pass
-            self.mic_pacat = None
-
-        self.stop_monitor_pacat()
+        with self._lock:
+            if self._idle_timer is not None:
+                self._idle_timer.cancel()
+                self._idle_timer = None
+            self.stop_mic_pacat()
+            self.stop_monitor_pacat()
 
         if self.source_module_id is not None:
             subprocess.run(
