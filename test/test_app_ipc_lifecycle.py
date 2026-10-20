@@ -8,12 +8,26 @@ Test del ciclo de vida completo de VirtualMicApp e IPC:
 5. Envía comando STOP vía IPC -> Se apaga completamente la app
 """
 
+import os
 import subprocess
+import sys
 import threading
 import time
 
+from bindcurse.config import IS_LINUX
 from bindcurse.gui.app import VirtualMicApp
 from bindcurse.services.network.ipc import send_ipc_command
+
+
+def get_process_rss_mb() -> float:
+    try:
+        with open(f"/proc/{os.getpid()}/status", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024.0
+    except Exception:
+        pass
+    return 0.0
 
 
 def is_window_present(substr: str) -> bool:
@@ -58,9 +72,15 @@ def test_app_ipc_flow():
     send_ipc_command(control_port, "HIDE")
     time.sleep(1.0)
     st3 = send_ipc_command(control_port, "STATUS")
-    print(f"    gui_active tras HIDE: {st3.get('gui_active') if st3 else None}")
+    rss_after_hide = get_process_rss_mb()
+    print(f"    gui_active tras HIDE: {st3.get('gui_active') if st3 else None} (Daemon RSS: {rss_after_hide:.2f} MB)")
     assert st3 and not st3.get("gui_active")
     assert not is_window_present("BindCurse — Receptor"), "La ventana debería haberse destruido por completo"
+    assert "dearpygui" not in sys.modules, "dearpygui no debe cargarse en el proceso demonio"
+    assert "numpy" not in sys.modules, "numpy no debe cargarse en el proceso demonio"
+    if IS_LINUX:
+        assert "sounddevice" not in sys.modules, "sounddevice no debe cargarse en Linux"
+        assert rss_after_hide < 50.0, f"RAM del demonio demasiado alta tras HIDE: {rss_after_hide:.2f} MB"
 
     # 4. Enviar SHOW de nuevo
     print("\n[4] Enviando SHOW de nuevo vía IPC...")
