@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from bindcurse.config import IS_LINUX, IS_WINDOWS
 from bindcurse.services.tray.base import TrayCallbacks, TrayIcon, TrayState
-from bindcurse.services.tray.icons import render_icon, to_argb32_bytes
+from bindcurse.services.tray.icons import (
+    render_argb32_icon,
+    render_icon,
+    to_argb32_bytes,
+)
 
 
 def create_tray(callbacks: TrayCallbacks) -> TrayIcon:
@@ -22,6 +26,7 @@ __all__ = [
     "TrayIcon",
     "TrayState",
     "create_tray",
+    "render_argb32_icon",
     "render_icon",
     "to_argb32_bytes",
 ]

@@ -11,7 +11,7 @@ import threading
 from typing import Callable, Optional
 
 from bindcurse.services.tray.base import TrayCallbacks, TrayIcon, TrayState
-from bindcurse.services.tray.icons import render_icon, to_argb32_bytes
+from bindcurse.services.tray.icons import render_argb32_icon
 
 # Menu item IDs
 M_ROOT, M_OPEN, M_SEP1, M_STATUS, M_ADDR, M_SEP2, M_MONITOR, M_MUTE, M_SEP3, M_QUIT = (
@@ -53,9 +53,9 @@ class LinuxSNITray(TrayIcon):
             [
                 size,
                 size,
-                to_argb32_bytes(render_icon(st.icon_state, size, st.monitor)),
+                render_argb32_icon(st.icon_state, size, st.monitor),
             ]
-            for size in (22, 32, 48, 64)
+            for size in (24, 48)
         ]
 
     def run_action(self, fn: Callable[[], None]) -> None:
