@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import dearpygui.dearpygui as dpg
-
 from bindcurse.gui.helpers import find_system_font
 
 
 def setup_theme_and_fonts() -> int | str | None:
     """Configures fonts and visual theme in Dear PyGui context. Returns large_font if loaded."""
+    import dearpygui.dearpygui as dpg
+
     reg_font_path = find_system_font(bold=False)
     bold_font_path = find_system_font(bold=True) or reg_font_path
     large_font = None
@@ -45,6 +45,8 @@ def setup_theme_and_fonts() -> int | str | None:
 
 def create_danger_button_theme() -> int | str:
     """Creates a distinct red theme for destructive actions like Quit."""
+    import dearpygui.dearpygui as dpg
+
     with dpg.theme() as danger_btn_theme:
         with dpg.theme_component(dpg.mvButton):
             dpg.add_theme_color(dpg.mvThemeCol_Button, (175, 45, 55, 255))
