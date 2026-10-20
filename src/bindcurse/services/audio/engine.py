@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import array
 import atexit
+import math
 import socket
 import struct
+import sys
 import threading
 import time
-
-import numpy as np
-
 from typing import TYPE_CHECKING
 
 from bindcurse.config import (
@@ -17,13 +17,35 @@ from bindcurse.config import (
     CURRENT_PLATFORM,
     IS_LINUX,
     IS_WINDOWS,
-    PCM_DTYPE,
     SAMPLE_RATE,
 )
 
 if TYPE_CHECKING:
     from bindcurse.services.audio.linux_backend import LinuxAudioBackend
     from bindcurse.services.audio.windows_backend import WindowsAudioBackend
+
+
+def _scale_pcm_s16le(raw_bytes: bytes, gain: float) -> bytes:
+    """Scales 16-bit signed little-endian PCM samples with clipping using stdlib array."""
+    valid_len = len(raw_bytes) & ~1
+    if valid_len <= 0:
+        return b""
+    arr = array.array("h")
+    arr.frombytes(raw_bytes[:valid_len])
+    if sys.byteorder != "little":
+        arr.byteswap()
+    scaled = array.array(
+        "h",
+        (
+            -32768
+            if (v := int(s * gain)) < -32768
+            else (32767 if v > 32767 else v)
+            for s in arr
+        ),
+    )
+    if sys.byteorder != "little":
+        scaled.byteswap()
+    return scaled.tobytes()
 
 
 class VirtualMicEngine:
@@ -113,16 +135,10 @@ class VirtualMicEngine:
         if not raw_bytes:
             return
 
-        samples: np.ndarray | None = None
-
         # 1. Prepare Virtual Microphone PCM buffer
         if not self.mic_muted:
             if abs(self.mic_gain - 1.0) > 1e-3:
-                samples = np.frombuffer(raw_bytes, dtype=PCM_DTYPE)
-                scaled = np.clip(
-                    samples.astype(np.float32) * self.mic_gain, -32768.0, 32767.0
-                ).astype(PCM_DTYPE)
-                mic_bytes = scaled.tobytes()
+                mic_bytes = _scale_pcm_s16le(raw_bytes, self.mic_gain)
             else:
                 mic_bytes = raw_bytes
         else:
@@ -132,14 +148,10 @@ class VirtualMicEngine:
         monitor_bytes: bytes | None = None
         if self.monitor_enabled:
             if abs(self.monitor_volume - 1.0) > 1e-3:
-                if samples is None:
-                    samples = np.frombuffer(raw_bytes, dtype=PCM_DTYPE)
-                mon_scaled = np.clip(
-                    samples.astype(np.float32) * self.monitor_volume,
-                    -32768.0,
-                    32767.0,
-                ).astype(PCM_DTYPE)
-                monitor_bytes = mon_scaled.tobytes()
+                if abs(self.monitor_volume - self.mic_gain) <= 1e-4 and not self.mic_muted:
+                    monitor_bytes = mic_bytes
+                else:
+                    monitor_bytes = _scale_pcm_s16le(raw_bytes, self.monitor_volume)
             else:
                 monitor_bytes = raw_bytes
 
@@ -172,12 +184,20 @@ class VirtualMicEngine:
                     # Optional handshake before stream
                     sock.sendto(b"BINDCURSE_HELLO|1|48000|16|1|LocalTestTone", ("127.0.0.1", port))
                     for i in range(total_chunks):
-                        t = (np.arange(chunk_samples) + i * chunk_samples) / float(
-                            self.sample_rate
-                        )
                         freq = 440.0 if i < (total_chunks // 2) else 554.37
-                        wave = np.sin(2.0 * np.pi * freq * t) * 0.35
-                        pcm = (wave * 32767.0).astype(PCM_DTYPE).tobytes()
+                        step = 2.0 * math.pi * freq / float(self.sample_rate)
+                        base = i * chunk_samples
+                        amp = 0.35 * 32767.0
+                        pcm_arr = array.array(
+                            "h",
+                            (
+                                int(math.sin((base + k) * step) * amp)
+                                for k in range(chunk_samples)
+                            ),
+                        )
+                        if sys.byteorder != "little":
+                            pcm_arr.byteswap()
+                        pcm = pcm_arr.tobytes()
                         packet = AUDIO_MAGIC + struct.pack("<I", i) + pcm
                         sock.sendto(packet, ("127.0.0.1", port))
                         time.sleep(chunk_samples / float(self.sample_rate))

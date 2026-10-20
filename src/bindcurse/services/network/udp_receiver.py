@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import array
+import math
 import platform
 import socket
 import struct
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import Callable, List, Tuple
-
-import numpy as np
 
 from bindcurse.config import (
     AUDIO_HEADER_SIZE,
@@ -17,7 +18,6 @@ from bindcurse.config import (
     DEFAULT_UDP_PORT,
     IS_LINUX,
     IS_WINDOWS,
-    PCM_DTYPE,
     PROTOCOL_PREFIX,
 )
 from bindcurse.services.network.os_network import (
@@ -346,11 +346,16 @@ class UDPAudioReceiver:
             rms = 0.0
             peak = 0.0
             if self.compute_levels:
-                samples = np.frombuffer(raw_pcm, dtype=PCM_DTYPE)
-                if samples.size > 0:
-                    float_samples = samples.astype(np.float32) * (1.0 / 32768.0)
-                    rms = float(np.sqrt(np.mean(float_samples * float_samples)))
-                    peak = float(np.max(np.abs(float_samples)))
+                samples = array.array("h")
+                samples.frombytes(raw_pcm)
+                if sys.byteorder != "little":
+                    samples.byteswap()
+                n = len(samples)
+                if n > 0:
+                    max_abs = max(abs(max(samples)), abs(min(samples)))
+                    peak = max_abs / 32768.0
+                    sum_sq = sum(s * s for s in samples)
+                    rms = math.sqrt(sum_sq / n) / 32768.0
 
             with self._lock:
                 dev = self._devices.get(ip)
