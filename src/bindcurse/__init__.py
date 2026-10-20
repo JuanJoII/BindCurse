@@ -6,9 +6,18 @@ import signal
 import subprocess
 import sys
 
+from typing import Any
+
 from bindcurse.config import APP_NAME, DEFAULT_UDP_PORT, IS_WINDOWS, UserSettings
-from bindcurse.gui import VirtualMicApp
-from bindcurse.services import send_ipc_command
+from bindcurse.services.network.ipc import send_ipc_command
+
+
+def __getattr__(name: str) -> Any:
+    if name == "VirtualMicApp":
+        from bindcurse.gui.app import VirtualMicApp
+
+        return VirtualMicApp
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _print_status(resp: dict[str, object]) -> None:
@@ -195,6 +204,8 @@ def main() -> None:
             "  • Ejecuta 'uv run bindcurse --stop' (o el botón 'Apagar y Salir') para cerrarlo del todo."
         )
         return
+
+    from bindcurse.gui.app import VirtualMicApp
 
     app = VirtualMicApp(udp_port=port)
 
