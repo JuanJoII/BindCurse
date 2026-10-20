@@ -8,6 +8,8 @@ import time
 
 import numpy as np
 
+from typing import TYPE_CHECKING
+
 from bindcurse.config import (
     AUDIO_MAGIC,
     CHANNELS,
@@ -18,8 +20,10 @@ from bindcurse.config import (
     PCM_DTYPE,
     SAMPLE_RATE,
 )
-from bindcurse.services.audio.linux_backend import LinuxAudioBackend
-from bindcurse.services.audio.windows_backend import WindowsAudioBackend
+
+if TYPE_CHECKING:
+    from bindcurse.services.audio.linux_backend import LinuxAudioBackend
+    from bindcurse.services.audio.windows_backend import WindowsAudioBackend
 
 
 class VirtualMicEngine:
@@ -49,13 +53,17 @@ class VirtualMicEngine:
 
         self._lock = threading.Lock()
 
-        # Instantiate OS-specific backends
-        self._linux_backend = (
-            LinuxAudioBackend(sample_rate, channels) if IS_LINUX else None
-        )
-        self._windows_backend = (
-            WindowsAudioBackend(sample_rate, channels) if IS_WINDOWS else None
-        )
+        # Instantiate OS-specific backends lazily to avoid loading unused native libraries
+        self._linux_backend: LinuxAudioBackend | None = None
+        self._windows_backend: WindowsAudioBackend | None = None
+        if IS_LINUX:
+            from bindcurse.services.audio.linux_backend import LinuxAudioBackend
+
+            self._linux_backend = LinuxAudioBackend(sample_rate, channels)
+        elif IS_WINDOWS:
+            from bindcurse.services.audio.windows_backend import WindowsAudioBackend
+
+            self._windows_backend = WindowsAudioBackend(sample_rate, channels)
 
         atexit.register(self.shutdown)
 

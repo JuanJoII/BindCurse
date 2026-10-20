@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from bindcurse.services.audio import (
-    LinuxAudioBackend,
-    VirtualMicEngine,
-    WindowsAudioBackend,
-)
+from typing import Any
+
+from bindcurse.services.audio import VirtualMicEngine
 from bindcurse.services.network import (
     DeviceInfo,
     UDPAudioReceiver,
@@ -31,3 +29,11 @@ __all__ = [
     "TrayState",
     "create_tray",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in ("LinuxAudioBackend", "WindowsAudioBackend"):
+        from bindcurse.services import audio
+
+        return getattr(audio, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

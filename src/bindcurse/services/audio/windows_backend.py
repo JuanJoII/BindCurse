@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
-
-import sounddevice as sd
+from typing import TYPE_CHECKING, Any
 
 from bindcurse.config import CHANNELS, SAMPLE_RATE
+
+if TYPE_CHECKING:
+    import sounddevice as sd
 
 
 class WindowsAudioBackend:
@@ -22,6 +23,8 @@ class WindowsAudioBackend:
         Returns (success, device_label, status_message).
         """
         try:
+            import sounddevice as sd
+
             devices = sd.query_devices()
             cable_index: int | None = None
             cable_name: str = ""
@@ -66,6 +69,8 @@ class WindowsAudioBackend:
         if self.sd_monitor_stream is not None:
             return
         try:
+            import sounddevice as sd
+
             stream = sd.RawOutputStream(
                 samplerate=self.sample_rate,
                 channels=self.channels,
