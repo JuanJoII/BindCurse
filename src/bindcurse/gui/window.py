@@ -4,6 +4,7 @@ import math
 import os
 import signal
 import sys
+import threading
 import time
 from collections import deque
 from typing import Any
@@ -30,9 +31,11 @@ class GuiSessionWindow:
         self._known_table_ips: list[str] = []
         self._closing: bool = False
         self._consecutive_ipc_failures: int = 0
+        self._state_lock = threading.Lock()
 
         # Initial snapshot from daemon
         state = send_ipc_command(self.control_port, "STATUS") or {}
+        self._latest_state: dict[str, Any] = dict(state)
         self.udp_port: int = int(state.get("udp_port", self.control_port - 1))
         self.selected_ip: str = str(state.get("ip", "127.0.0.1"))
         raw_ips = state.get("local_ips")
@@ -50,6 +53,37 @@ class GuiSessionWindow:
 
     def _ipc(self, command: str) -> dict[str, Any]:
         return send_ipc_command(self.control_port, command) or {}
+
+    def _send_async_ipc(self, command: str) -> None:
+        def _target() -> None:
+            send_ipc_command(self.control_port, command)
+
+        threading.Thread(target=_target, daemon=True).start()
+
+    def _poll_worker(self) -> None:
+        while not self._closing:
+            state = send_ipc_command(self.control_port, "STATUS")
+            if state is not None:
+                with self._state_lock:
+                    self._latest_state = state
+                    self._consecutive_ipc_failures = 0
+                if state.get("should_close"):
+                    self._closing = True
+                    try:
+                        dpg.stop_dearpygui()
+                    except Exception:
+                        pass
+                    break
+            else:
+                self._consecutive_ipc_failures += 1
+                if self._consecutive_ipc_failures > 50:
+                    self._closing = True
+                    try:
+                        dpg.stop_dearpygui()
+                    except Exception:
+                        pass
+                    break
+            time.sleep(0.08)
 
     def _refresh_ips_callback(self) -> None:
         resp = self._ipc("REFRESH_IPS")
@@ -72,7 +106,7 @@ class GuiSessionWindow:
         if app_data:
             ip = app_data.split()[0].strip()
             self.selected_ip = ip
-            self._ipc(f"SET_IP|{ip}")
+            self._send_async_ipc(f"SET_IP|{ip}")
             self._update_connection_banner()
 
     def _update_connection_banner(self) -> None:
@@ -92,32 +126,42 @@ class GuiSessionWindow:
 
     def _on_monitor_toggled(self, _sender: int, app_data: bool) -> None:
         self.monitor_enabled = bool(app_data)
-        self._ipc(f"SET_MONITOR|{1 if self.monitor_enabled else 0}")
+        with self._state_lock:
+            self._latest_state["monitor_enabled"] = self.monitor_enabled
+        self._send_async_ipc(f"SET_MONITOR|{1 if self.monitor_enabled else 0}")
 
     def _on_mute_toggled(self, _sender: int, app_data: bool) -> None:
         self.mic_muted = bool(app_data)
-        self._ipc(f"SET_MUTE|{1 if self.mic_muted else 0}")
+        with self._state_lock:
+            self._latest_state["mic_muted"] = self.mic_muted
+        self._send_async_ipc(f"SET_MUTE|{1 if self.mic_muted else 0}")
 
     def _on_bg_toggled(self, _sender: int, app_data: bool) -> None:
         self.keep_in_background = bool(app_data)
-        self._ipc(f"SET_KEEP_BG|{1 if self.keep_in_background else 0}")
+        with self._state_lock:
+            self._latest_state["keep_in_background"] = self.keep_in_background
+        self._send_async_ipc(f"SET_KEEP_BG|{1 if self.keep_in_background else 0}")
 
     def _on_mic_gain_changed(self, _sender: int, app_data: float) -> None:
         val = float(app_data)
         self.mic_gain = val / 100.0
-        self._ipc(f"SET_GAIN|{val}")
+        with self._state_lock:
+            self._latest_state["mic_gain"] = self.mic_gain
+        self._send_async_ipc(f"SET_GAIN|{val}")
 
     def _on_monitor_vol_changed(self, _sender: int, app_data: float) -> None:
         val = float(app_data)
         self.monitor_volume = val / 100.0
-        self._ipc(f"SET_MONITOR_VOL|{val}")
+        with self._state_lock:
+            self._latest_state["monitor_volume"] = self.monitor_volume
+        self._send_async_ipc(f"SET_MONITOR_VOL|{val}")
 
     def _on_recreate_mic(self) -> None:
         resp = self._ipc("RECREATE_MIC")
         self._update_mic_status_ui(resp)
 
     def _on_test_tone(self) -> None:
-        self._ipc("TEST_TONE")
+        self._send_async_ipc("TEST_TONE")
 
     def _on_hide_to_background(self) -> None:
         self._closing = True
@@ -455,17 +499,12 @@ class GuiSessionWindow:
         )
 
     def _update_frame(self) -> None:
-        state = self._ipc("STATUS")
+        with self._state_lock:
+            state = dict(self._latest_state)
+
         if not state:
-            self._consecutive_ipc_failures += 1
-            # Do not immediately close window on a single transient socket timeout.
-            # Only close if the daemon has been confirmed unreachable for multiple seconds.
-            if self._consecutive_ipc_failures > 30:
-                self._closing = True
-                dpg.stop_dearpygui()
             return
 
-        self._consecutive_ipc_failures = 0
         if state.get("should_close"):
             self._closing = True
             dpg.stop_dearpygui()
@@ -587,14 +626,20 @@ class GuiSessionWindow:
             dpg.show_viewport()
             dpg.set_primary_window("primary_window", True)
 
+            poller = threading.Thread(
+                target=self._poll_worker, name="GuiPoller", daemon=True
+            )
+            poller.start()
+
             last_ui_update = 0.0
             while dpg.is_dearpygui_running() and not self._closing:
                 now = time.time()
-                if now - last_ui_update >= 0.1:
+                if now - last_ui_update >= 0.05:
                     self._update_frame()
                     last_ui_update = now
                 dpg.render_dearpygui_frame()
         finally:
+            self._closing = True
             try:
                 dpg.destroy_context()
             except Exception:

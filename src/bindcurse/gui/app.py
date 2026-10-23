@@ -167,14 +167,21 @@ class VirtualMicApp:
             except OSError:
                 break
 
-            with conn:
-                try:
-                    conn.settimeout(0.5)
-                    raw_cmd = conn.recv(512).decode("utf-8", errors="replace").strip()
-                    resp = self._handle_ipc_command(raw_cmd)
-                    conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
-                except Exception:
-                    pass
+            threading.Thread(
+                target=self._serve_ipc_connection,
+                args=(conn,),
+                daemon=True,
+            ).start()
+
+    def _serve_ipc_connection(self, conn: socket.socket) -> None:
+        with conn:
+            try:
+                conn.settimeout(1.0)
+                raw_cmd = conn.recv(1024).decode("utf-8", errors="replace").strip()
+                resp = self._handle_ipc_command(raw_cmd)
+                conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
+            except Exception:
+                pass
 
     def _serialize_devices(self, devices: list[DeviceInfo]) -> list[dict[str, object]]:
         return [
