@@ -123,7 +123,8 @@ class VirtualMicEngine:
                 if self._windows_backend:
                     self._windows_backend.stop_monitor()
             else:
-                # On Linux, monitor_pacat starts on-demand when audio packets arrive
+                if self._linux_backend:
+                    self._linux_backend.start_monitor_pacat()
                 if self._windows_backend:
                     self._windows_backend.ensure_monitor()
 
