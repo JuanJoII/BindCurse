@@ -119,6 +119,17 @@ class LinuxAudioBackend:
                 f"Error creando micrófono virtual en PipeWire/PulseAudio: {exc}",
             )
 
+    @staticmethod
+    def _set_nonblocking(fd: int) -> None:
+        try:
+            import fcntl
+            import os
+
+            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+            fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        except Exception:
+            pass
+
     def start_mic_pacat(self) -> None:
         if self.mic_pacat is not None and self.mic_pacat.poll() is None:
             return
@@ -137,13 +148,14 @@ class LinuxAudioBackend:
                 "--latency-msec=20",
                 "--property=media.role=virtual-source",
                 f"--property=target.object={VIRTUAL_SINK_NAME}",
-                "--property=node.passive=true",
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             bufsize=0,
         )
+        if self.mic_pacat.stdin is not None:
+            self._set_nonblocking(self.mic_pacat.stdin.fileno())
 
     def stop_mic_pacat(self) -> None:
         if self.mic_pacat is not None:
@@ -170,6 +182,9 @@ class LinuxAudioBackend:
                             self.mic_pacat.stdin.write(mic_bytes)
                         except Exception:
                             pass
+                except (BlockingIOError, OSError):
+                    if self.mic_pacat.poll() is not None:
+                        self.start_mic_pacat()
 
     def start_monitor_pacat(self) -> None:
         if self.monitor_pacat is not None and self.monitor_pacat.poll() is None:
@@ -193,6 +208,8 @@ class LinuxAudioBackend:
                 stderr=subprocess.DEVNULL,
                 bufsize=0,
             )
+            if self.monitor_pacat.stdin is not None:
+                self._set_nonblocking(self.monitor_pacat.stdin.fileno())
 
     def stop_monitor_pacat(self) -> None:
         if self.monitor_pacat is not None:
@@ -219,6 +236,9 @@ class LinuxAudioBackend:
                             self.monitor_pacat.stdin.write(monitor_bytes)
                         except Exception:
                             pass
+                except (BlockingIOError, OSError):
+                    if self.monitor_pacat.poll() is not None:
+                        self.start_monitor_pacat()
 
     def cleanup(self) -> None:
         with self._lock:

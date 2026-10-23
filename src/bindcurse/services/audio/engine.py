@@ -3,6 +3,7 @@ from __future__ import annotations
 import array
 import atexit
 import math
+import queue
 import socket
 import struct
 import sys
@@ -72,6 +73,12 @@ class VirtualMicEngine:
         self.status_message: str = "Iniciando..."
 
         self._lock = threading.Lock()
+        self._audio_queue: queue.Queue[bytes] = queue.Queue(maxsize=20)
+        self._worker_running = True
+        self._worker_thread = threading.Thread(
+            target=self._audio_worker, name="VirtualMicEngineWorker", daemon=True
+        )
+        self._worker_thread.start()
 
         # Instantiate OS-specific backends lazily to avoid loading unused native libraries
         self._linux_backend: LinuxAudioBackend | None = None
@@ -130,50 +137,73 @@ class VirtualMicEngine:
 
     def process_audio_chunk(self, raw_bytes: bytes, _addr: tuple[str, int]) -> None:
         """
-        Receives int16 mono 48kHz PCM bytes from the UDP receiver and injects them
-        in real time into the virtual microphone and (if enabled) system audio monitor.
-        Uses a zero-copy fast path when gain/volume are at 100% (1.0).
+        Receives int16 mono 48kHz PCM bytes from the UDP receiver and enqueues them
+        for non-blocking injection into the virtual microphone and monitor.
+        Drops oldest frame if queue is full to preserve real-time low latency.
         """
-        if not raw_bytes:
+        if not raw_bytes or not self._worker_running:
             return
+        try:
+            self._audio_queue.put_nowait(raw_bytes)
+        except queue.Full:
+            try:
+                self._audio_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._audio_queue.put_nowait(raw_bytes)
+            except queue.Full:
+                pass
 
-        # 1. Prepare Virtual Microphone PCM buffer
-        if not self.mic_muted:
-            if abs(self.mic_gain - 1.0) > 1e-3:
-                mic_bytes = _scale_pcm_s16le(raw_bytes, self.mic_gain)
-            else:
-                mic_bytes = raw_bytes
-        else:
-            mic_bytes = b"\x00" * len(raw_bytes)
+    def _audio_worker(self) -> None:
+        while self._worker_running:
+            try:
+                raw_bytes = self._audio_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
 
-        # 2. Prepare System Output Monitor PCM buffer (if enabled)
-        monitor_bytes: bytes | None = None
-        if self.monitor_enabled:
-            if abs(self.monitor_volume - 1.0) > 1e-3:
-                if (
-                    abs(self.monitor_volume - self.mic_gain) <= 1e-4
-                    and not self.mic_muted
-                ):
-                    monitor_bytes = mic_bytes
+            mic_muted = self.mic_muted
+            mic_gain = self.mic_gain
+            monitor_enabled = self.monitor_enabled
+            monitor_volume = self.monitor_volume
+
+            # 1. Prepare Virtual Microphone PCM buffer
+            if not mic_muted:
+                if abs(mic_gain - 1.0) > 1e-3:
+                    mic_bytes = _scale_pcm_s16le(raw_bytes, mic_gain)
                 else:
-                    monitor_bytes = _scale_pcm_s16le(raw_bytes, self.monitor_volume)
+                    mic_bytes = raw_bytes
             else:
-                monitor_bytes = raw_bytes
+                mic_bytes = b"\x00" * len(raw_bytes)
 
-        with self._lock:
-            # Inject into Virtual Microphone
-            if self.virtual_mic_ready:
-                if self._linux_backend:
-                    self._linux_backend.write_mic(mic_bytes)
-                elif self._windows_backend:
-                    self._windows_backend.write_mic(mic_bytes)
+            # 2. Prepare System Output Monitor PCM buffer (if enabled)
+            monitor_bytes: bytes | None = None
+            if monitor_enabled:
+                if abs(monitor_volume - 1.0) > 1e-3:
+                    if (
+                        abs(monitor_volume - mic_gain) <= 1e-4
+                        and not mic_muted
+                    ):
+                        monitor_bytes = mic_bytes
+                    else:
+                        monitor_bytes = _scale_pcm_s16le(raw_bytes, monitor_volume)
+                else:
+                    monitor_bytes = raw_bytes
 
-            # Inject into System Audio Output Monitor if enabled
-            if self.monitor_enabled and monitor_bytes is not None:
-                if self._linux_backend:
-                    self._linux_backend.write_monitor(monitor_bytes)
-                elif self._windows_backend:
-                    self._windows_backend.write_monitor(monitor_bytes)
+            with self._lock:
+                # Inject into Virtual Microphone
+                if self.virtual_mic_ready:
+                    if self._linux_backend:
+                        self._linux_backend.write_mic(mic_bytes)
+                    elif self._windows_backend:
+                        self._windows_backend.write_mic(mic_bytes)
+
+                # Inject into System Audio Output Monitor if enabled
+                if monitor_enabled and monitor_bytes is not None:
+                    if self._linux_backend:
+                        self._linux_backend.write_monitor(monitor_bytes)
+                    elif self._windows_backend:
+                        self._windows_backend.write_monitor(monitor_bytes)
 
     def send_test_tone_udp(self, port: int = 5005, duration_sec: float = 1.5) -> None:
         """
@@ -222,5 +252,6 @@ class VirtualMicEngine:
         self.virtual_mic_ready = False
 
     def shutdown(self) -> None:
+        self._worker_running = False
         with self._lock:
             self._cleanup_virtual_mic_locked()
