@@ -29,6 +29,7 @@ class GuiSessionWindow:
         self._large_font: int | str | None = None
         self._known_table_ips: list[str] = []
         self._closing: bool = False
+        self._consecutive_ipc_failures: int = 0
 
         # Initial snapshot from daemon
         state = send_ipc_command(self.control_port, "STATUS") or {}
@@ -455,7 +456,17 @@ class GuiSessionWindow:
 
     def _update_frame(self) -> None:
         state = self._ipc("STATUS")
-        if not state or state.get("should_close"):
+        if not state:
+            self._consecutive_ipc_failures += 1
+            # Do not immediately close window on a single transient socket timeout.
+            # Only close if the daemon has been confirmed unreachable for multiple seconds.
+            if self._consecutive_ipc_failures > 30:
+                self._closing = True
+                dpg.stop_dearpygui()
+            return
+
+        self._consecutive_ipc_failures = 0
+        if state.get("should_close"):
             self._closing = True
             dpg.stop_dearpygui()
             return
@@ -554,8 +565,11 @@ class GuiSessionWindow:
             except Exception:
                 pass
 
-        signal.signal(signal.SIGTERM, _on_signal)
-        signal.signal(signal.SIGINT, _on_signal)
+        try:
+            signal.signal(signal.SIGTERM, _on_signal)
+            signal.signal(signal.SIGINT, _on_signal)
+        except (ValueError, OSError):
+            pass
 
         dpg.create_context()
         try:
@@ -576,7 +590,7 @@ class GuiSessionWindow:
             last_ui_update = 0.0
             while dpg.is_dearpygui_running() and not self._closing:
                 now = time.time()
-                if now - last_ui_update >= 0.05:
+                if now - last_ui_update >= 0.1:
                     self._update_frame()
                     last_ui_update = now
                 dpg.render_dearpygui_frame()

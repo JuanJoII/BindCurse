@@ -19,11 +19,16 @@ def find_system_font(bold: bool = False) -> str | None:
     except Exception:
         pass
 
+    win_dir = os.environ.get("SystemRoot") or os.environ.get("windir") or "C:/Windows"
+    win_fonts = os.path.join(win_dir, "Fonts")
+
     candidates = (
         [
             "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
             "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/noto/NotoSans-Bold.ttf",
+            os.path.join(win_fonts, "segoeuib.ttf"),
+            os.path.join(win_fonts, "arialbd.ttf"),
             "C:/Windows/Fonts/segoeuib.ttf",
             "C:/Windows/Fonts/arialbd.ttf",
         ]
@@ -32,6 +37,8 @@ def find_system_font(bold: bool = False) -> str | None:
             "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/TTF/DejaVuSans.ttf",
             "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+            os.path.join(win_fonts, "segoeui.ttf"),
+            os.path.join(win_fonts, "arial.ttf"),
             "C:/Windows/Fonts/segoeui.ttf",
             "C:/Windows/Fonts/arial.ttf",
         ]

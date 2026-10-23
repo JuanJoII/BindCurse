@@ -384,11 +384,20 @@ class VirtualMicApp:
         self._gui_close_event.clear()
         self.receiver.compute_levels = True
 
+        from bindcurse.config import APP_NAME, IS_WINDOWS
+        import os
+
+        gui_exe = sys.executable
+        if IS_WINDOWS:
+            pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+            if os.path.isfile(pythonw):
+                gui_exe = pythonw
+
         proc: subprocess.Popen[bytes] | None = None
         try:
             proc = subprocess.Popen(
                 [
-                    sys.executable,
+                    gui_exe,
                     "-m",
                     "bindcurse.gui.window",
                     str(self.control_port),
@@ -403,6 +412,16 @@ class VirtualMicApp:
                     break
                 self._gui_close_event.wait(timeout=0.05)
         finally:
+            exit_code = proc.poll() if proc is not None else None
+            if (
+                exit_code is not None
+                and exit_code != 0
+                and not self._quit_requested
+                and not self._hide_requested
+            ):
+                print(
+                    f"[{APP_NAME}] Ventana gráfica cerrada inesperadamente (código {exit_code})"
+                )
             self._terminate_gui_process()
             self._gui_proc = None
             self.gui_active = False
