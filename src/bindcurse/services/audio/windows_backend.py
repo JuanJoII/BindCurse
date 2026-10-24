@@ -15,23 +15,25 @@ class WindowsAudioBackend:
         self.channels = channels
         self.sd_mic_stream: Any = None
         self.sd_monitor_stream: Any = None
+        self._monitor_channels: int = channels
+        self._monitor_failed: bool = False
 
     @staticmethod
     def _hostapi_priority(api_name: str) -> int:
         lower = api_name.lower()
-        if "directsound" in lower:
+        if "mme" in lower:
             return 0
         if "wasapi" in lower:
             return 1
-        if "mme" in lower:
+        if "directsound" in lower:
             return 2
         return 3
 
     def setup(self) -> tuple[bool, str, str]:
         """
         Finds VB-Cable input device and opens a RawOutputStream.
-        Prioritizes 'CABLE Input' over 'CABLE In 16ch' and prefers modern Windows Host APIs
-        (DirectSound / WASAPI with untruncated names and 48kHz support) over MME.
+        Prioritizes 'CABLE Input' over 'CABLE In 16ch' and prioritizes MME because
+        VB-Audio Virtual Cable's virtual loopback bridge functions on Windows MME/WDM.
         Returns (success, device_label, status_message).
         """
         try:
@@ -95,61 +97,62 @@ class WindowsAudioBackend:
             return False, "Error", f"Error abriendo VB-Cable: {exc}"
 
     def write_mic(self, mic_bytes: bytes) -> None:
-        if self.sd_mic_stream is not None:
+        stream = self.sd_mic_stream
+        if stream is not None:
             try:
-                self.sd_mic_stream.write(mic_bytes)
+                if stream.stopped:
+                    stream.start()
+                stream.write(mic_bytes)
             except Exception:
                 pass
 
     def ensure_monitor(self) -> None:
-        if self.sd_monitor_stream is not None:
+        if self.sd_monitor_stream is not None or self._monitor_failed:
             return
         try:
             import sounddevice as sd
 
-            target_device: int | None = None
-            try:
-                hostapis = sd.query_hostapis()
-                ranked_apis = sorted(
-                    enumerate(hostapis),
-                    key=lambda item: self._hostapi_priority(
-                        str(item[1].get("name", ""))
-                    ),
-                )
-                for _, api_info in ranked_apis:
-                    default_out = int(api_info.get("default_output_device", -1))
-                    if default_out >= 0:
-                        target_device = default_out
-                        break
-            except Exception:
-                target_device = None
-
+            # 1. Try opening system default device with requested channels
             try:
                 stream = sd.RawOutputStream(
                     samplerate=self.sample_rate,
                     channels=self.channels,
                     dtype="int16",
-                    device=target_device,
+                    device=None,
                     latency="low",
                 )
                 stream.start()
                 self.sd_monitor_stream = stream
+                self._monitor_channels = self.channels
+                self._monitor_failed = False
                 return
             except Exception:
                 pass
 
-            stream = sd.RawOutputStream(
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                dtype="int16",
-                latency="low",
-            )
-            stream.start()
-            self.sd_monitor_stream = stream
+            # 2. Fallback: try opening system default device with stereo (2 channels)
+            try:
+                stream = sd.RawOutputStream(
+                    samplerate=self.sample_rate,
+                    channels=2,
+                    dtype="int16",
+                    device=None,
+                    latency="low",
+                )
+                stream.start()
+                self.sd_monitor_stream = stream
+                self._monitor_channels = 2
+                self._monitor_failed = False
+                return
+            except Exception:
+                pass
+
+            self._monitor_failed = True
         except Exception:
             self.sd_monitor_stream = None
+            self._monitor_failed = True
 
     def stop_monitor(self) -> None:
+        self._monitor_failed = False
         if self.sd_monitor_stream is not None:
             try:
                 self.sd_monitor_stream.stop()
@@ -160,9 +163,20 @@ class WindowsAudioBackend:
 
     def write_monitor(self, monitor_bytes: bytes) -> None:
         self.ensure_monitor()
-        if self.sd_monitor_stream is not None:
+        stream = self.sd_monitor_stream
+        if stream is not None:
             try:
-                self.sd_monitor_stream.write(monitor_bytes)
+                if stream.stopped:
+                    stream.start()
+                if self._monitor_channels == 2 and self.channels == 1:
+                    stereo_bytes = bytearray(len(monitor_bytes) * 2)
+                    stereo_bytes[0::4] = monitor_bytes[0::2]
+                    stereo_bytes[1::4] = monitor_bytes[1::2]
+                    stereo_bytes[2::4] = monitor_bytes[0::2]
+                    stereo_bytes[3::4] = monitor_bytes[1::2]
+                    stream.write(stereo_bytes)
+                else:
+                    stream.write(monitor_bytes)
             except Exception:
                 pass
 
