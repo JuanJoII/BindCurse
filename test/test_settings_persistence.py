@@ -13,11 +13,14 @@ import tempfile
 import time
 from pathlib import Path
 
-from bindcurse.config import UserSettings, DEFAULT_UDP_PORT
+from bindcurse.config import DEFAULT_UDP_PORT, UserSettings
+from bindcurse.core import get_orchestrator
 from bindcurse.gui.app import VirtualMicApp
 
+get_orchestrator()
 
-def test_settings_save_and_load():
+
+def test_settings_save_and_load() -> None:
     print("=" * 60)
     print(" TEST: Persistencia de configuraciones (UserSettings)")
     print("=" * 60)
@@ -97,7 +100,7 @@ def test_settings_save_and_load():
     )
 
 
-def test_app_integration():
+def test_app_integration() -> None:
     print("=" * 60)
     print(" TEST: Integración de configuraciones con VirtualMicApp")
     print("=" * 60)

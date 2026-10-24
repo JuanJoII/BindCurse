@@ -11,9 +11,12 @@ from typing import Any
 
 import dearpygui.dearpygui as dpg
 
+from bindcurse.core import get_orchestrator
 from bindcurse.gui.helpers import format_bytes, terminate_dpg_glfw
 from bindcurse.gui.theme import create_danger_button_theme, setup_theme_and_fonts
 from bindcurse.services.network.ipc import send_ipc_command
+
+_COALESCED_COMMANDS = {"SET_GAIN", "SET_MONITOR_VOL"}
 
 
 class GuiSessionWindow:
@@ -21,7 +24,7 @@ class GuiSessionWindow:
     Runs the Dear PyGui viewport inside an isolated child process.
     Communicates with the background VirtualMicApp daemon over local IPC.
     When the window closes, the child process exits so the OS kernel reclaims 100%
-    of the OpenGL/GPU driver, GLFW, and DearPyGui heap allocations.
+    of the OpenGL/DirectX, GLFW/Win32, and DearPyGui heap allocations.
     """
 
     def __init__(self, control_port: int) -> None:
@@ -32,6 +35,13 @@ class GuiSessionWindow:
         self._closing: bool = False
         self._consecutive_ipc_failures: int = 0
         self._state_lock = threading.Lock()
+        self._last_user_mutation: float = 0.0
+
+        # Coalescing async command queue (avoids spawning hundreds of threads/sockets on slider drag)
+        self._cmd_lock = threading.Lock()
+        self._cmd_event = threading.Event()
+        self._pending_coalesced: dict[str, str] = {}
+        self._pending_ordered: deque[str] = deque()
 
         # Initial snapshot from daemon
         state = send_ipc_command(self.control_port, "STATUS") or {}
@@ -55,16 +65,61 @@ class GuiSessionWindow:
         return send_ipc_command(self.control_port, command) or {}
 
     def _send_async_ipc(self, command: str) -> None:
-        def _target() -> None:
-            send_ipc_command(self.control_port, command)
+        prefix = command.split("|", 1)[0].strip().upper()
+        with self._cmd_lock:
+            if prefix in _COALESCED_COMMANDS:
+                self._pending_coalesced[prefix] = command
+            else:
+                self._pending_ordered.append(command)
+        self._cmd_event.set()
 
-        threading.Thread(target=_target, daemon=True).start()
+    def _cmd_worker(self) -> None:
+        while not self._closing:
+            self._cmd_event.wait(timeout=0.1)
+            self._cmd_event.clear()
+            while not self._closing:
+                cmd: str | None = None
+                with self._cmd_lock:
+                    if self._pending_ordered:
+                        cmd = self._pending_ordered.popleft()
+                    elif self._pending_coalesced:
+                        key = next(iter(self._pending_coalesced))
+                        cmd = self._pending_coalesced.pop(key)
+                if cmd is None:
+                    break
+                resp = send_ipc_command(self.control_port, cmd)
+                if isinstance(resp, dict):
+                    with self._state_lock:
+                        for k in (
+                            "monitor_enabled",
+                            "mic_muted",
+                            "keep_in_background",
+                            "mic_gain",
+                            "monitor_volume",
+                            "ip",
+                        ):
+                            if k in resp:
+                                self._latest_state[k] = resp[k]
 
     def _poll_worker(self) -> None:
         while not self._closing:
+            poll_started = time.monotonic()
             state = send_ipc_command(self.control_port, "STATUS")
             if state is not None:
                 with self._state_lock:
+                    # If the user mutated a toggle while this STATUS poll was in flight
+                    # (or within 350ms), preserve the user's optimistic toggle values.
+                    if poll_started < self._last_user_mutation + 0.35:
+                        for key in (
+                            "monitor_enabled",
+                            "mic_muted",
+                            "keep_in_background",
+                            "mic_gain",
+                            "monitor_volume",
+                            "ip",
+                        ):
+                            if key in self._latest_state:
+                                state[key] = self._latest_state[key]
                     self._latest_state = state
                     self._consecutive_ipc_failures = 0
                 if state.get("should_close"):
@@ -106,6 +161,9 @@ class GuiSessionWindow:
         if app_data:
             ip = app_data.split()[0].strip()
             self.selected_ip = ip
+            with self._state_lock:
+                self._last_user_mutation = time.monotonic()
+                self._latest_state["ip"] = ip
             self._send_async_ipc(f"SET_IP|{ip}")
             self._update_connection_banner()
 
@@ -127,18 +185,21 @@ class GuiSessionWindow:
     def _on_monitor_toggled(self, _sender: int, app_data: bool) -> None:
         self.monitor_enabled = bool(app_data)
         with self._state_lock:
+            self._last_user_mutation = time.monotonic()
             self._latest_state["monitor_enabled"] = self.monitor_enabled
         self._send_async_ipc(f"SET_MONITOR|{1 if self.monitor_enabled else 0}")
 
     def _on_mute_toggled(self, _sender: int, app_data: bool) -> None:
         self.mic_muted = bool(app_data)
         with self._state_lock:
+            self._last_user_mutation = time.monotonic()
             self._latest_state["mic_muted"] = self.mic_muted
         self._send_async_ipc(f"SET_MUTE|{1 if self.mic_muted else 0}")
 
     def _on_bg_toggled(self, _sender: int, app_data: bool) -> None:
         self.keep_in_background = bool(app_data)
         with self._state_lock:
+            self._last_user_mutation = time.monotonic()
             self._latest_state["keep_in_background"] = self.keep_in_background
         self._send_async_ipc(f"SET_KEEP_BG|{1 if self.keep_in_background else 0}")
 
@@ -146,6 +207,7 @@ class GuiSessionWindow:
         val = float(app_data)
         self.mic_gain = val / 100.0
         with self._state_lock:
+            self._last_user_mutation = time.monotonic()
             self._latest_state["mic_gain"] = self.mic_gain
         self._send_async_ipc(f"SET_GAIN|{val}")
 
@@ -153,23 +215,30 @@ class GuiSessionWindow:
         val = float(app_data)
         self.monitor_volume = val / 100.0
         with self._state_lock:
+            self._last_user_mutation = time.monotonic()
             self._latest_state["monitor_volume"] = self.monitor_volume
         self._send_async_ipc(f"SET_MONITOR_VOL|{val}")
 
     def _on_recreate_mic(self) -> None:
         resp = self._ipc("RECREATE_MIC")
-        self._update_mic_status_ui(resp)
+        if resp:
+            with self._state_lock:
+                self._last_user_mutation = time.monotonic()
+                self._latest_state.update(resp)
+            self._update_mic_status_ui(resp)
 
     def _on_test_tone(self) -> None:
         self._send_async_ipc("TEST_TONE")
 
     def _on_hide_to_background(self) -> None:
         self._closing = True
+        self._cmd_event.set()
         self._ipc("HIDE_BG")
         dpg.stop_dearpygui()
 
     def _on_quit_completely(self) -> None:
         self._closing = True
+        self._cmd_event.set()
         self._ipc("STOP")
         dpg.stop_dearpygui()
 
@@ -177,6 +246,8 @@ class GuiSessionWindow:
         resp = self._ipc("CLEAR_INACTIVE")
         devices = resp.get("devices")
         if isinstance(devices, list):
+            with self._state_lock:
+                self._latest_state["devices"] = devices
             self._rebuild_devices_table(devices)
 
     def _on_toggle_block_device(
@@ -185,6 +256,8 @@ class GuiSessionWindow:
         resp = self._ipc(f"TOGGLE_BLOCK|{user_data}")
         devices = resp.get("devices")
         if isinstance(devices, list):
+            with self._state_lock:
+                self._latest_state["devices"] = devices
             self._rebuild_devices_table(devices)
 
     def _update_mic_status_ui(self, state: dict[str, Any]) -> None:
@@ -395,6 +468,7 @@ class GuiSessionWindow:
                         max_value=250.0,
                         format="%.0f%%",
                         width=220,
+                        tag="mic_gain_slider",
                         callback=self._on_mic_gain_changed,
                     )
                     dpg.add_spacer(width=20)
@@ -405,6 +479,7 @@ class GuiSessionWindow:
                         max_value=200.0,
                         format="%.0f%%",
                         width=220,
+                        tag="monitor_vol_slider",
                         callback=self._on_monitor_vol_changed,
                     )
 
@@ -514,6 +589,7 @@ class GuiSessionWindow:
 
         mon_enabled = bool(state.get("monitor_enabled", False))
         mic_muted = bool(state.get("mic_muted", False))
+        keep_bg = bool(state.get("keep_in_background", True))
         if (
             dpg.does_item_exist("monitor_checkbox")
             and dpg.get_value("monitor_checkbox") != mon_enabled
@@ -524,6 +600,11 @@ class GuiSessionWindow:
             and dpg.get_value("mute_checkbox") != mic_muted
         ):
             dpg.set_value("mute_checkbox", mic_muted)
+        if (
+            dpg.does_item_exist("bg_checkbox")
+            and dpg.get_value("bg_checkbox") != keep_bg
+        ):
+            dpg.set_value("bg_checkbox", keep_bg)
 
         peak = float(state.get("current_peak", 0.0))
         rms = float(state.get("current_rms", 0.0))
@@ -599,6 +680,7 @@ class GuiSessionWindow:
     def run(self) -> None:
         def _on_signal(_sig: int, _frame: object) -> None:
             self._closing = True
+            self._cmd_event.set()
             try:
                 dpg.stop_dearpygui()
             except Exception:
@@ -615,8 +697,9 @@ class GuiSessionWindow:
             self._large_font = setup_theme_and_fonts()
             self._build_ui()
 
+            viewport_title = "BindCurse — Receptor de Micrófono UDP (48kHz 16-bit Mono)"
             dpg.create_viewport(
-                title="BindCurse — Receptor de Micrófono UDP (48kHz 16-bit Mono)",
+                title=viewport_title,
                 width=940,
                 height=675,
                 min_width=780,
@@ -624,7 +707,13 @@ class GuiSessionWindow:
             )
             dpg.setup_dearpygui()
             dpg.show_viewport()
+            get_orchestrator().setup_gui_viewport(viewport_title)
             dpg.set_primary_window("primary_window", True)
+
+            cmd_thread = threading.Thread(
+                target=self._cmd_worker, name="GuiCmdDispatcher", daemon=True
+            )
+            cmd_thread.start()
 
             poller = threading.Thread(
                 target=self._poll_worker, name="GuiPoller", daemon=True
@@ -640,6 +729,7 @@ class GuiSessionWindow:
                 dpg.render_dearpygui_frame()
         finally:
             self._closing = True
+            self._cmd_event.set()
             try:
                 dpg.destroy_context()
             except Exception:

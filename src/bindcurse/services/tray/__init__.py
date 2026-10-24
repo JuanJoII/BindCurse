@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bindcurse.config import IS_LINUX, IS_WINDOWS
+from bindcurse.core import get_orchestrator
 from bindcurse.services.tray.base import TrayCallbacks, TrayIcon, TrayState
 from bindcurse.services.tray.icons import (
     render_argb32_icon,
@@ -10,15 +10,7 @@ from bindcurse.services.tray.icons import (
 
 
 def create_tray(callbacks: TrayCallbacks) -> TrayIcon:
-    if IS_LINUX:
-        from bindcurse.services.tray.linux_tray import LinuxSNITray
-
-        return LinuxSNITray(callbacks)
-    if IS_WINDOWS:
-        from bindcurse.services.tray.windows_tray import WindowsTray
-
-        return WindowsTray(callbacks)
-    return TrayIcon(callbacks)
+    return get_orchestrator().create_tray(callbacks)
 
 
 __all__ = [

@@ -1,52 +1,11 @@
 from __future__ import annotations
 
-import os
-import subprocess
+from bindcurse.core import get_orchestrator
 
 
 def find_system_font(bold: bool = False) -> str | None:
     """Finds a readable system TTF font supporting Latin-1 / Spanish characters."""
-    try:
-        pattern = "sans-serif:bold" if bold else "sans-serif"
-        out = subprocess.check_output(
-            ["fc-match", "-f", "%{file}\n", pattern],
-            text=True,
-            stderr=subprocess.DEVNULL,
-            timeout=1.5,
-        ).strip()
-        if out and os.path.isfile(out):
-            return out
-    except Exception:
-        pass
-
-    win_dir = os.environ.get("SystemRoot") or os.environ.get("windir") or "C:/Windows"
-    win_fonts = os.path.join(win_dir, "Fonts")
-
-    candidates = (
-        [
-            "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/noto/NotoSans-Bold.ttf",
-            os.path.join(win_fonts, "segoeuib.ttf"),
-            os.path.join(win_fonts, "arialbd.ttf"),
-            "C:/Windows/Fonts/segoeuib.ttf",
-            "C:/Windows/Fonts/arialbd.ttf",
-        ]
-        if bold
-        else [
-            "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/TTF/DejaVuSans.ttf",
-            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-            os.path.join(win_fonts, "segoeui.ttf"),
-            os.path.join(win_fonts, "arial.ttf"),
-            "C:/Windows/Fonts/segoeui.ttf",
-            "C:/Windows/Fonts/arial.ttf",
-        ]
-    )
-    for path in candidates:
-        if os.path.isfile(path):
-            return path
-    return None
+    return get_orchestrator().find_system_font(bold=bold)
 
 
 def format_bytes(num_bytes: int) -> str:
@@ -59,25 +18,8 @@ def format_bytes(num_bytes: int) -> str:
 
 def terminate_dpg_glfw() -> None:
     """
-    Terminates the GLFW backend after destroying DearPyGui context.
-
-    DearPyGui's `destroy_context()` only frees its internal ImGui data
-    structures, leaving the native GLFW window mapped on the display server
-    (X11 / Wayland / Win32). Because event processing stops when the render loop
-    exits, that un-destroyed window freezes on screen and does not respond to events.
-
-    Explicitly invoking `glfwTerminate()` properly closes the native GLFW window
-    and cleans up display surfaces so that the application can cleanly run in
-    the background with zero lingering windows.
+    Cleans up native display server resources after destroying the DearPyGui context.
+    Delegates platform-specific teardown (GLFW on Linux vs native Win32/DX11 on Windows)
+    to the platform orchestrator.
     """
-    try:
-        import ctypes
-        import dearpygui._dearpygui as _dpg_ext
-
-        lib = ctypes.CDLL(_dpg_ext.__file__)
-        if hasattr(lib, "glfwTerminate"):
-            lib.glfwTerminate.restype = None
-            lib.glfwTerminate.argtypes = []
-            lib.glfwTerminate()
-    except Exception:
-        pass
+    get_orchestrator().cleanup_gui_viewport()

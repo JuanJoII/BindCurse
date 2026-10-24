@@ -17,6 +17,10 @@ def send_ipc_command(control_port: int, command: str) -> Dict[str, Any] | None:
         if len(parts) > 1:
             normalized = f"{normalized}|{parts[1].strip()}"
         with socket.create_connection(("127.0.0.1", control_port), timeout=0.6) as sock:
+            try:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except OSError:
+                pass
             sock.sendall((normalized + "\n").encode("utf-8"))
             chunks: list[bytes] = []
             while True:

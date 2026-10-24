@@ -1,35 +1,30 @@
 #!/usr/bin/env python3
 """
 Test de ciclo de vida de la interfaz DearPyGui en BindCurse:
-Verifica que al cerrar la interfaz, la ventana nativa (GLFW / X11 / Wayland)
+Verifica que al cerrar la interfaz, la ventana nativa (GLFW / X11 / Wayland / Win32)
 se destruye por completo sin congelarse ni dejar ventanas zombi,
 y que al reabrir la ventana se crea una única instancia activa.
 """
 
-import subprocess
 import time
 
 import dearpygui.dearpygui as dpg
 
+from bindcurse.core import get_orchestrator
 from bindcurse.gui.helpers import terminate_dpg_glfw
+
+get_orchestrator()
 
 
 def get_hyprland_windows() -> list[str]:
-    try:
-        out = subprocess.check_output(
-            ["hyprctl", "clients"], stderr=subprocess.DEVNULL
-        ).decode("utf-8")
-        return [line for line in out.splitlines() if "title:" in line]
-    except Exception:
-        return []
+    return get_orchestrator().get_matching_windows("")
 
 
 def is_window_in_hyprland(title_substr: str) -> bool:
-    lines = get_hyprland_windows()
-    return any(title_substr in l for l in lines)
+    return get_orchestrator().is_window_present(title_substr)
 
 
-def test_session_lifecycle():
+def test_session_lifecycle() -> None:
     title = "BindCurse_LifecycleTest"
     print("=" * 60)
     print(" TEST: Ciclo de vida de GUI y destrucción de ventana")
@@ -74,7 +69,7 @@ def test_session_lifecycle():
         dpg.render_dearpygui_frame()
         time.sleep(0.01)
 
-    matching_titles = [l for l in get_hyprland_windows() if title in l]
+    matching_titles = get_orchestrator().get_matching_windows(title)
     print(f"    Número de ventanas detectadas tras reabrir: {len(matching_titles)}")
     assert len(matching_titles) == 1, (
         f"Error: Se esperaban 1 ventana, se encontraron {len(matching_titles)}"

@@ -16,10 +16,9 @@ from bindcurse.config import (
     CHANNELS,
     CHUNK_SAMPLES,
     CURRENT_PLATFORM,
-    IS_LINUX,
-    IS_WINDOWS,
     SAMPLE_RATE,
 )
+from bindcurse.core import get_orchestrator
 
 if TYPE_CHECKING:
     from bindcurse.services.audio.linux_backend import LinuxAudioBackend
@@ -59,6 +58,7 @@ class VirtualMicEngine:
         self.sample_rate = sample_rate
         self.channels = channels
         self.platform = CURRENT_PLATFORM
+        self.orchestrator = get_orchestrator()
 
         # User-controllable audio parameters
         self.mic_muted: bool = False
@@ -80,17 +80,12 @@ class VirtualMicEngine:
         )
         self._worker_thread.start()
 
-        # Instantiate OS-specific backends lazily to avoid loading unused native libraries
-        self._linux_backend: LinuxAudioBackend | None = None
-        self._windows_backend: WindowsAudioBackend | None = None
-        if IS_LINUX:
-            from bindcurse.services.audio.linux_backend import LinuxAudioBackend
-
-            self._linux_backend = LinuxAudioBackend(sample_rate, channels)
-        elif IS_WINDOWS:
-            from bindcurse.services.audio.windows_backend import WindowsAudioBackend
-
-            self._windows_backend = WindowsAudioBackend(sample_rate, channels)
+        # Instantiate OS-specific backends lazily via the platform orchestrator
+        self._linux_backend: LinuxAudioBackend | None
+        self._windows_backend: WindowsAudioBackend | None
+        self._linux_backend, self._windows_backend = (
+            self.orchestrator.create_audio_backends(sample_rate, channels)
+        )
 
         atexit.register(self.shutdown)
 
@@ -98,28 +93,14 @@ class VirtualMicEngine:
         """Creates or connects to the system virtual microphone."""
         with self._lock:
             self._cleanup_virtual_mic_locked()
-            if IS_LINUX and self._linux_backend is not None:
-                ok, label, msg = self._linux_backend.setup()
-                self.virtual_mic_ready = ok
-                self.backend_name = (
-                    "PipeWire / PulseAudio" if ok else "PipeWire / PulseAudio (Error)"
-                )
-                self.device_label = label
-                self.status_message = msg
-                return ok, msg
-            elif IS_WINDOWS and self._windows_backend is not None:
-                ok, label, msg = self._windows_backend.setup()
-                self.virtual_mic_ready = ok
-                self.backend_name = (
-                    "VB-Audio Virtual Cable" if ok else "VB-Cable (No detectado)"
-                )
-                self.device_label = label
-                self.status_message = msg
-                return ok, msg
-            else:
-                self.status_message = f"Plataforma no soportada: {self.platform}"
-                self.virtual_mic_ready = False
-                return False, self.status_message
+            ok, backend_name, label, msg = self.orchestrator.setup_audio_backend(
+                self._linux_backend, self._windows_backend
+            )
+            self.virtual_mic_ready = ok
+            self.backend_name = backend_name
+            self.device_label = label
+            self.status_message = msg
+            return ok, msg
 
     def set_monitor_enabled(self, enabled: bool) -> None:
         with self._lock:
@@ -180,10 +161,7 @@ class VirtualMicEngine:
             monitor_bytes: bytes | None = None
             if monitor_enabled:
                 if abs(monitor_volume - 1.0) > 1e-3:
-                    if (
-                        abs(monitor_volume - mic_gain) <= 1e-4
-                        and not mic_muted
-                    ):
+                    if abs(monitor_volume - mic_gain) <= 1e-4 and not mic_muted:
                         monitor_bytes = mic_bytes
                     else:
                         monitor_bytes = _scale_pcm_s16le(raw_bytes, monitor_volume)

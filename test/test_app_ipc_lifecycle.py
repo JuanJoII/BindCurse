@@ -9,14 +9,16 @@ Test del ciclo de vida completo de VirtualMicApp e IPC:
 """
 
 import os
-import subprocess
 import sys
 import threading
 import time
 
 from bindcurse.config import IS_LINUX
+from bindcurse.core import get_orchestrator
 from bindcurse.gui.app import VirtualMicApp
 from bindcurse.services.network.ipc import send_ipc_command
+
+get_orchestrator()
 
 
 def get_process_rss_mb() -> float:
@@ -31,16 +33,10 @@ def get_process_rss_mb() -> float:
 
 
 def is_window_present(substr: str) -> bool:
-    try:
-        out = subprocess.check_output(
-            ["hyprctl", "clients"], stderr=subprocess.DEVNULL
-        ).decode("utf-8")
-        return any(substr in line for line in out.splitlines())
-    except Exception:
-        return False
+    return get_orchestrator().is_window_present(substr)
 
 
-def test_app_ipc_flow():
+def test_app_ipc_flow() -> None:
     port = 5990
     control_port = port + 1
     app = VirtualMicApp(udp_port=port)
@@ -67,7 +63,7 @@ def test_app_ipc_flow():
     # 2. Enviar SHOW
     print("\n[2] Enviando SHOW vía IPC...")
     send_ipc_command(control_port, "SHOW")
-    time.sleep(1.0)
+    time.sleep(1.2)
     st2 = send_ipc_command(control_port, "STATUS")
     print(f"    gui_active tras SHOW: {st2.get('gui_active') if st2 else None}")
     assert st2 and st2.get("gui_active")
@@ -76,7 +72,7 @@ def test_app_ipc_flow():
     # 3. Enviar HIDE
     print("\n[3] Enviando HIDE vía IPC...")
     send_ipc_command(control_port, "HIDE")
-    time.sleep(1.0)
+    time.sleep(1.2)
     st3 = send_ipc_command(control_port, "STATUS")
     rss_after_hide = get_process_rss_mb()
     print(
@@ -99,7 +95,7 @@ def test_app_ipc_flow():
     # 4. Enviar SHOW de nuevo
     print("\n[4] Enviando SHOW de nuevo vía IPC...")
     send_ipc_command(control_port, "SHOW")
-    time.sleep(1.0)
+    time.sleep(1.2)
     st4 = send_ipc_command(control_port, "STATUS")
     print(f"    gui_active tras 2do SHOW: {st4.get('gui_active') if st4 else None}")
     assert st4 and st4.get("gui_active")

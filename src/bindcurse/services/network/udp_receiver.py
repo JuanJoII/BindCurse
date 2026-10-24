@@ -16,12 +16,10 @@ from bindcurse.config import (
     AUDIO_MAGIC,
     DEFAULT_BUFFER_SIZE,
     DEFAULT_UDP_PORT,
-    IS_LINUX,
-    IS_WINDOWS,
     PROTOCOL_PREFIX,
 )
+from bindcurse.core import get_orchestrator
 from bindcurse.services.network.os_network import (
-    get_linux_ips,
     get_windows_ips,
     probe_primary_ip,
 )
@@ -74,11 +72,7 @@ def get_local_ips() -> List[Tuple[str, str]]:
     seen_ips: set[str] = set()
 
     primary_ip = probe_primary_ip()
-
-    if IS_LINUX:
-        results.extend(get_linux_ips(primary_ip))
-    elif IS_WINDOWS:
-        results.extend(get_windows_ips(primary_ip))
+    results.extend(get_orchestrator().get_local_ips(primary_ip))
 
     for _, ip in results:
         seen_ips.add(ip)

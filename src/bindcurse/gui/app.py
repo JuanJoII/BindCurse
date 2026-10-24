@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import gc
 import json
-import shutil
 import socket
 import subprocess
-import sys
 import threading
 from collections import deque
 
-from bindcurse.config import UserSettings
+from bindcurse.config import APP_NAME, UserSettings
+from bindcurse.core import get_orchestrator
 from bindcurse.services.audio import VirtualMicEngine
 from bindcurse.services.network import (
     DeviceInfo,
@@ -25,20 +24,13 @@ from bindcurse.services.tray import (
 
 
 def _notify_user(title: str, body: str) -> None:
-    """Sends a non-blocking desktop notification if notify-send is available."""
-    if shutil.which("notify-send"):
-        try:
-            subprocess.Popen(
-                ["notify-send", "-a", "BindCurse", title, body],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except Exception:
-            pass
+    """Sends a non-blocking desktop notification via the platform orchestrator."""
+    get_orchestrator().notify_user(title, body)
 
 
 class VirtualMicApp:
     def __init__(self, udp_port: int | None = None) -> None:
+        self.orchestrator = get_orchestrator()
         self.settings = UserSettings.load()
         self.udp_port = udp_port if udp_port is not None else self.settings.udp_port
         self.control_port = self.udp_port + 1
@@ -126,17 +118,10 @@ class VirtualMicApp:
         self.receiver.stop()
         self.audio.shutdown()
 
-    def _terminate_gui_process(self) -> None:
-        proc = self._gui_proc
-        if proc is not None and proc.poll() is None:
-            try:
-                proc.terminate()
-                proc.wait(timeout=0.4)
-            except Exception:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+    def _terminate_gui_process(self, graceful_timeout: float = 0.0) -> None:
+        self.orchestrator.stop_gui_process(
+            self._gui_proc, graceful_timeout=graceful_timeout
+        )
 
     def _start_ipc_server(self) -> None:
         if self._ipc_sock is not None:
@@ -145,7 +130,7 @@ class VirtualMicApp:
             srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             srv.bind(("127.0.0.1", self.control_port))
-            srv.listen(8)
+            srv.listen(64)
             srv.settimeout(0.5)
             self._ipc_sock = srv
             self._ipc_thread = threading.Thread(
@@ -176,6 +161,10 @@ class VirtualMicApp:
     def _serve_ipc_connection(self, conn: socket.socket) -> None:
         with conn:
             try:
+                try:
+                    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                except OSError:
+                    pass
                 conn.settimeout(1.0)
                 raw_cmd = conn.recv(1024).decode("utf-8", errors="replace").strip()
                 resp = self._handle_ipc_command(raw_cmd)
@@ -380,10 +369,10 @@ class VirtualMicApp:
 
     def _run_gui_session(self) -> None:
         """
-        Spawns an isolated child process to host the Dear PyGui / OpenGL viewport.
-        When the user closes the window (or HIDE/STOP is requested), the child process
-        exits completely, returning 100% of GPU driver, OpenGL, GLFW, and UI heap memory
-        to the operating system without polluting the background daemon process.
+        Spawns an isolated child process via the platform orchestrator to host the Dear PyGui
+        viewport. When the user closes the window (or HIDE/STOP is requested), the child process
+        exits completely, returning 100% of GPU driver, OpenGL/DirectX, GLFW/Win32, and UI heap
+        memory to the operating system without polluting the background daemon process.
         """
         self._start_ipc_server()
         self.gui_active = True
@@ -391,31 +380,14 @@ class VirtualMicApp:
         self._gui_close_event.clear()
         self.receiver.compute_levels = True
 
-        from bindcurse.config import APP_NAME, IS_WINDOWS
-        import os
-
-        gui_exe = sys.executable
-        if IS_WINDOWS:
-            pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-            if os.path.isfile(pythonw):
-                gui_exe = pythonw
-
         proc: subprocess.Popen[bytes] | None = None
         try:
-            proc = subprocess.Popen(
-                [
-                    gui_exe,
-                    "-m",
-                    "bindcurse.gui.window",
-                    str(self.control_port),
-                ],
-                stdin=subprocess.DEVNULL,
-            )
+            proc = self.orchestrator.spawn_gui_process(self.control_port)
             self._gui_proc = proc
 
             while proc.poll() is None:
                 if self._quit_requested or self._hide_requested:
-                    self._terminate_gui_process()
+                    self._terminate_gui_process(graceful_timeout=1.2)
                     break
                 self._gui_close_event.wait(timeout=0.05)
         finally:
