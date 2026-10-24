@@ -11,7 +11,7 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
-from bindcurse.config import (
+from bindcurse.core.config import (
     AUDIO_MAGIC,
     CHANNELS,
     CHUNK_SAMPLES,

@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import threading
 
-from bindcurse.config import (
+from bindcurse.core.config import (
     CHANNELS,
     SAMPLE_RATE,
     VIRTUAL_MIC_DESCRIPTION,

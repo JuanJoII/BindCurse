@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, List, Tuple
 
-from bindcurse.config import (
+from bindcurse.core.config import (
     AUDIO_HEADER_SIZE,
     AUDIO_MAGIC,
     DEFAULT_BUFFER_SIZE,

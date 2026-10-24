@@ -13,7 +13,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from bindcurse.config import DEFAULT_UDP_PORT, UserSettings
+from bindcurse.core.config import DEFAULT_UDP_PORT, UserSettings
 from bindcurse.core import get_orchestrator
 from bindcurse.gui.app import VirtualMicApp
 

@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 
-from bindcurse.config import IS_LINUX
+from bindcurse.core.config import IS_LINUX
 from bindcurse.core import get_orchestrator
 from bindcurse.gui.app import VirtualMicApp
 from bindcurse.services.network.ipc import send_ipc_command

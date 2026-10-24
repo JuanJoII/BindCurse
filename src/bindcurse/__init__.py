@@ -5,7 +5,7 @@ import os
 import signal
 from typing import Any
 
-from bindcurse.config import APP_NAME, DEFAULT_UDP_PORT, UserSettings
+from bindcurse.core.config import APP_NAME, DEFAULT_UDP_PORT, UserSettings
 from bindcurse.core import get_orchestrator
 from bindcurse.services.network.ipc import send_ipc_command
 

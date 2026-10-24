@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from bindcurse.config import CHANNELS, SAMPLE_RATE
+from bindcurse.core.config import CHANNELS, SAMPLE_RATE
 
 
 class WindowsAudioBackend:

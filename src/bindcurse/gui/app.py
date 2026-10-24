@@ -7,7 +7,7 @@ import subprocess
 import threading
 from collections import deque
 
-from bindcurse.config import APP_NAME, UserSettings
+from bindcurse.core.config import APP_NAME, UserSettings
 from bindcurse.core import get_orchestrator
 from bindcurse.services.audio import VirtualMicEngine
 from bindcurse.services.network import (

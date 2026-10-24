@@ -7,7 +7,7 @@ import sys
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from bindcurse.config import CURRENT_PLATFORM, IS_LINUX, IS_WINDOWS
+from bindcurse.core.config import CURRENT_PLATFORM, IS_LINUX, IS_WINDOWS
 
 if TYPE_CHECKING:
     from bindcurse.services.audio.linux_backend import LinuxAudioBackend
