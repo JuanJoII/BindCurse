@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
 
-from bindcurse.config import (
+from bindcurse.core.config import (
     CHANNELS,
     SAMPLE_RATE,
     VIRTUAL_MIC_DESCRIPTION,
@@ -15,13 +16,16 @@ from bindcurse.config import (
 class LinuxAudioBackend:
     """Manages virtual mic and monitor using PipeWire/PulseAudio via pactl/pacat."""
 
-    def __init__(self, sample_rate: int = SAMPLE_RATE, channels: int = CHANNELS) -> None:
+    def __init__(
+        self, sample_rate: int = SAMPLE_RATE, channels: int = CHANNELS
+    ) -> None:
         self.sample_rate = sample_rate
         self.channels = channels
         self.sink_module_id: str | None = None
         self.source_module_id: str | None = None
         self.mic_pacat: subprocess.Popen[bytes] | None = None
         self.monitor_pacat: subprocess.Popen[bytes] | None = None
+        self._lock = threading.Lock()
 
     def is_available(self) -> bool:
         return bool(shutil.which("pactl") and shutil.which("pacat"))
@@ -101,6 +105,7 @@ class LinuxAudioBackend:
             ).strip()
             self.source_module_id = src_out
 
+            # Start mic pacat stream stably bound to bindcurse_sink
             self.start_mic_pacat()
 
             device_label = f"{VIRTUAL_MIC_DESCRIPTION} ({VIRTUAL_SOURCE_NAME})"
@@ -108,7 +113,22 @@ class LinuxAudioBackend:
             return True, device_label, msg
         except Exception as exc:
             self.cleanup()
-            return False, "Error", f"Error creando micrófono virtual en PipeWire/PulseAudio: {exc}"
+            return (
+                False,
+                "Error",
+                f"Error creando micrófono virtual en PipeWire/PulseAudio: {exc}",
+            )
+
+    @staticmethod
+    def _set_nonblocking(fd: int) -> None:
+        try:
+            import fcntl
+            import os
+
+            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+            fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        except Exception:
+            pass
 
     def start_mic_pacat(self) -> None:
         if self.mic_pacat is not None and self.mic_pacat.poll() is None:
@@ -119,26 +139,52 @@ class LinuxAudioBackend:
                 "--playback",
                 "-d",
                 VIRTUAL_SINK_NAME,
+                "--client-name=BindCurse_VirtualMic",
+                "--stream-name=BindCurse_Mic_Playback",
                 "--format=s16le",
                 f"--rate={self.sample_rate}",
                 f"--channels={self.channels}",
                 "--raw",
                 "--latency-msec=20",
+                "--property=media.role=virtual-source",
+                f"--property=target.object={VIRTUAL_SINK_NAME}",
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             bufsize=0,
         )
+        if self.mic_pacat.stdin is not None:
+            self._set_nonblocking(self.mic_pacat.stdin.fileno())
+
+    def stop_mic_pacat(self) -> None:
+        if self.mic_pacat is not None:
+            try:
+                if self.mic_pacat.stdin:
+                    self.mic_pacat.stdin.close()
+                self.mic_pacat.terminate()
+                self.mic_pacat.wait(timeout=0.5)
+            except Exception:
+                pass
+            self.mic_pacat = None
 
     def write_mic(self, mic_bytes: bytes) -> None:
-        if self.mic_pacat is None or self.mic_pacat.poll() is not None:
-            self.start_mic_pacat()
-        if self.mic_pacat is not None and self.mic_pacat.stdin is not None:
-            try:
-                self.mic_pacat.stdin.write(mic_bytes)
-            except BrokenPipeError:
+        with self._lock:
+            if self.mic_pacat is None or self.mic_pacat.poll() is not None:
                 self.start_mic_pacat()
+            if self.mic_pacat is not None and self.mic_pacat.stdin is not None:
+                try:
+                    self.mic_pacat.stdin.write(mic_bytes)
+                except BrokenPipeError:
+                    self.start_mic_pacat()
+                    if self.mic_pacat is not None and self.mic_pacat.stdin is not None:
+                        try:
+                            self.mic_pacat.stdin.write(mic_bytes)
+                        except Exception:
+                            pass
+                except (BlockingIOError, OSError):
+                    if self.mic_pacat.poll() is not None:
+                        self.start_mic_pacat()
 
     def start_monitor_pacat(self) -> None:
         if self.monitor_pacat is not None and self.monitor_pacat.poll() is None:
@@ -148,17 +194,22 @@ class LinuxAudioBackend:
                 [
                     "pacat",
                     "--playback",
+                    "--client-name=BindCurse_Monitor",
+                    "--stream-name=BindCurse_Monitor_Playback",
                     "--format=s16le",
                     f"--rate={self.sample_rate}",
                     f"--channels={self.channels}",
                     "--raw",
                     "--latency-msec=25",
+                    "--property=media.role=monitor",
                 ],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 bufsize=0,
             )
+            if self.monitor_pacat.stdin is not None:
+                self._set_nonblocking(self.monitor_pacat.stdin.fileno())
 
     def stop_monitor_pacat(self) -> None:
         if self.monitor_pacat is not None:
@@ -172,26 +223,30 @@ class LinuxAudioBackend:
             self.monitor_pacat = None
 
     def write_monitor(self, monitor_bytes: bytes) -> None:
-        if self.monitor_pacat is None or self.monitor_pacat.poll() is not None:
-            self.start_monitor_pacat()
-        if self.monitor_pacat is not None and self.monitor_pacat.stdin is not None:
-            try:
-                self.monitor_pacat.stdin.write(monitor_bytes)
-            except BrokenPipeError:
+        with self._lock:
+            if self.monitor_pacat is None or self.monitor_pacat.poll() is not None:
                 self.start_monitor_pacat()
+            if self.monitor_pacat is not None and self.monitor_pacat.stdin is not None:
+                try:
+                    self.monitor_pacat.stdin.write(monitor_bytes)
+                except BrokenPipeError:
+                    self.start_monitor_pacat()
+                    if (
+                        self.monitor_pacat is not None
+                        and self.monitor_pacat.stdin is not None
+                    ):
+                        try:
+                            self.monitor_pacat.stdin.write(monitor_bytes)
+                        except Exception:
+                            pass
+                except (BlockingIOError, OSError):
+                    if self.monitor_pacat.poll() is not None:
+                        self.start_monitor_pacat()
 
     def cleanup(self) -> None:
-        if self.mic_pacat is not None:
-            try:
-                if self.mic_pacat.stdin:
-                    self.mic_pacat.stdin.close()
-                self.mic_pacat.terminate()
-                self.mic_pacat.wait(timeout=0.5)
-            except Exception:
-                pass
-            self.mic_pacat = None
-
-        self.stop_monitor_pacat()
+        with self._lock:
+            self.stop_mic_pacat()
+            self.stop_monitor_pacat()
 
         if self.source_module_id is not None:
             subprocess.run(

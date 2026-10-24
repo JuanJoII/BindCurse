@@ -27,9 +27,7 @@ def get_linux_ips(primary_ip: str | None = None) -> List[Tuple[str, str]]:
                         if ip not in seen:
                             seen.add(ip)
                             label = (
-                                f"{iface} (Principal)"
-                                if ip == primary_ip
-                                else iface
+                                f"{iface} (Principal)" if ip == primary_ip else iface
                             )
                             if ip == primary_ip:
                                 results.insert(0, (label, ip))

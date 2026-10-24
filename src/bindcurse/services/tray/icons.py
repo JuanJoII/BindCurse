@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
-from PIL import Image, ImageDraw
+if TYPE_CHECKING:
+    from PIL import Image
 
 # Background colors by state
 STATE_COLORS: dict[str, tuple[int, int, int, int]] = {
@@ -15,11 +17,13 @@ STATE_COLORS: dict[str, tuple[int, int, int, int]] = {
 }
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=16)
 def render_icon(
     state: str = "idle", size: int = 64, monitor: bool = False
 ) -> Image.Image:
     """Draws a round microphone icon. Rendered at 4x and downscaled for anti-aliasing."""
+    from PIL import Image, ImageDraw
+
     scale = 4
     s = size * scale
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
@@ -55,10 +59,26 @@ def render_icon(
             width=int(2 * u),
         )
 
-    return img.resize((size, size), Image.LANCZOS)
+    resized = img.resize((size, size), Image.LANCZOS)
+    img.close()
+    return resized
 
 
 def to_argb32_bytes(img: Image.Image) -> bytes:
     """Converts RGBA to ARGB32 network byte order, as required by StatusNotifierItem IconPixmap."""
+    from PIL import Image
+
     r, g, b, a = img.convert("RGBA").split()
-    return Image.merge("RGBA", (a, r, g, b)).tobytes()
+    merged = Image.merge("RGBA", (a, r, g, b))
+    raw = merged.tobytes()
+    merged.close()
+    return raw
+
+
+@lru_cache(maxsize=16)
+def render_argb32_icon(
+    state: str = "idle", size: int = 48, monitor: bool = False
+) -> bytes:
+    """Renders and caches the final ARGB32 bytes directly, freeing intermediate PIL images."""
+    img = render_icon(state, size, monitor)
+    return to_argb32_bytes(img)

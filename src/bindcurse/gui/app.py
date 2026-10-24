@@ -2,19 +2,13 @@ from __future__ import annotations
 
 import gc
 import json
-import math
-import shutil
 import socket
 import subprocess
 import threading
-import time
 from collections import deque
 
-import dearpygui.dearpygui as dpg
-
-from bindcurse.config import DEFAULT_CONTROL_PORT, DEFAULT_UDP_PORT, UserSettings
-from bindcurse.gui.helpers import format_bytes, terminate_dpg_glfw
-from bindcurse.gui.theme import create_danger_button_theme, setup_theme_and_fonts
+from bindcurse.core.config import APP_NAME, UserSettings
+from bindcurse.core import get_orchestrator
 from bindcurse.services.audio import VirtualMicEngine
 from bindcurse.services.network import (
     DeviceInfo,
@@ -30,20 +24,13 @@ from bindcurse.services.tray import (
 
 
 def _notify_user(title: str, body: str) -> None:
-    """Sends a non-blocking desktop notification if notify-send is available."""
-    if shutil.which("notify-send"):
-        try:
-            subprocess.Popen(
-                ["notify-send", "-a", "BindCurse", title, body],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except Exception:
-            pass
+    """Sends a non-blocking desktop notification via the platform orchestrator."""
+    get_orchestrator().notify_user(title, body)
 
 
 class VirtualMicApp:
     def __init__(self, udp_port: int | None = None) -> None:
+        self.orchestrator = get_orchestrator()
         self.settings = UserSettings.load()
         self.udp_port = udp_port if udp_port is not None else self.settings.udp_port
         self.control_port = self.udp_port + 1
@@ -76,6 +63,8 @@ class VirtualMicApp:
         self._quit_requested: bool = False
         self._hide_requested: bool = False
         self._wake_event = threading.Event()
+        self._gui_close_event = threading.Event()
+        self._gui_proc: subprocess.Popen[bytes] | None = None
         self._ipc_sock: socket.socket | None = None
         self._ipc_thread: threading.Thread | None = None
 
@@ -114,7 +103,10 @@ class VirtualMicApp:
 
     def stop_services(self) -> None:
         self._quit_requested = True
+        self._hide_requested = True
+        self._gui_close_event.set()
         self._wake_event.set()
+        self._terminate_gui_process()
         self.settings.flush()
         self.tray.stop()
         if self._ipc_sock is not None:
@@ -126,6 +118,11 @@ class VirtualMicApp:
         self.receiver.stop()
         self.audio.shutdown()
 
+    def _terminate_gui_process(self, graceful_timeout: float = 0.0) -> None:
+        self.orchestrator.stop_gui_process(
+            self._gui_proc, graceful_timeout=graceful_timeout
+        )
+
     def _start_ipc_server(self) -> None:
         if self._ipc_sock is not None:
             return
@@ -133,7 +130,7 @@ class VirtualMicApp:
             srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             srv.bind(("127.0.0.1", self.control_port))
-            srv.listen(4)
+            srv.listen(64)
             srv.settimeout(0.5)
             self._ipc_sock = srv
             self._ipc_thread = threading.Thread(
@@ -155,21 +152,54 @@ class VirtualMicApp:
             except OSError:
                 break
 
-            with conn:
-                try:
-                    conn.settimeout(0.5)
-                    cmd = (
-                        conn.recv(256)
-                        .decode("utf-8", errors="replace")
-                        .strip()
-                        .upper()
-                    )
-                    resp = self._handle_ipc_command(cmd)
-                    conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
-                except Exception:
-                    pass
+            threading.Thread(
+                target=self._serve_ipc_connection,
+                args=(conn,),
+                daemon=True,
+            ).start()
 
-    def _handle_ipc_command(self, cmd: str) -> dict[str, object]:
+    def _serve_ipc_connection(self, conn: socket.socket) -> None:
+        with conn:
+            try:
+                try:
+                    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                except OSError:
+                    pass
+                conn.settimeout(1.0)
+                raw_cmd = conn.recv(1024).decode("utf-8", errors="replace").strip()
+                resp = self._handle_ipc_command(raw_cmd)
+                conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
+            except Exception:
+                pass
+
+    def _serialize_devices(self, devices: list[DeviceInfo]) -> list[dict[str, object]]:
+        return [
+            {
+                "ip": d.ip,
+                "port": d.port,
+                "address": d.address_str,
+                "display_name": d.display_name,
+                "name": d.client_name,
+                "state": d.session_state,
+                "active": d.is_active,
+                "packets": d.packets,
+                "lost": d.lost_packets,
+                "bytes": d.bytes_received,
+                "kbps": d.kbps,
+                "pps": d.pps,
+                "rms_level": d.rms_level,
+                "peak_level": d.peak_level,
+                "last_seen": d.last_seen,
+                "blocked": d.blocked,
+            }
+            for d in devices
+        ]
+
+    def _handle_ipc_command(self, raw_cmd: str) -> dict[str, object]:
+        parts = raw_cmd.split("|", 1)
+        cmd = parts[0].strip().upper()
+        arg = parts[1].strip() if len(parts) > 1 else ""
+
         if cmd == "SHOW":
             self._hide_requested = False
             if not self.gui_active:
@@ -177,62 +207,109 @@ class VirtualMicApp:
             return {"ok": True, "action": "show", "gui_active": self.gui_active}
         if cmd == "HIDE":
             self._hide_requested = True
-            if self.gui_active:
-                dpg.stop_dearpygui()
+            self._gui_close_event.set()
             return {"ok": True, "action": "hide"}
+        if cmd == "HIDE_BG":
+            self.keep_in_background = True
+            self._hide_requested = True
+            self._gui_close_event.set()
+            return {"ok": True, "action": "hide_bg"}
         if cmd in ("STOP", "QUIT"):
             self._quit_requested = True
             self._hide_requested = True
+            self._gui_close_event.set()
             self._wake_event.set()
-            if self.gui_active:
-                dpg.stop_dearpygui()
             return {"ok": True, "action": "stop"}
         if cmd == "TOGGLE_MONITOR":
-            self.audio.set_monitor_enabled(not self.audio.monitor_enabled)
-            self.settings.monitor_enabled = self.audio.monitor_enabled
-            self.settings.save()
+            self._on_monitor_toggled(0, not self.audio.monitor_enabled)
+            return {"ok": True, "monitor_enabled": self.audio.monitor_enabled}
+        if cmd == "SET_MONITOR":
+            self._on_monitor_toggled(0, arg in ("1", "TRUE"))
             return {"ok": True, "monitor_enabled": self.audio.monitor_enabled}
         if cmd == "TOGGLE_MUTE":
-            self.audio.mic_muted = not self.audio.mic_muted
-            self.settings.mic_muted = self.audio.mic_muted
-            self.settings.save()
+            self._on_mute_toggled(0, not self.audio.mic_muted)
             return {"ok": True, "mic_muted": self.audio.mic_muted}
+        if cmd == "SET_MUTE":
+            self._on_mute_toggled(0, arg in ("1", "TRUE"))
+            return {"ok": True, "mic_muted": self.audio.mic_muted}
+        if cmd == "SET_KEEP_BG":
+            self._on_bg_toggled(0, arg in ("1", "TRUE"))
+            return {"ok": True, "keep_in_background": self.keep_in_background}
+        if cmd == "SET_GAIN":
+            try:
+                self._on_mic_gain_changed(0, float(arg))
+            except ValueError:
+                pass
+            return {"ok": True, "mic_gain": self.audio.mic_gain}
+        if cmd == "SET_MONITOR_VOL":
+            try:
+                self._on_monitor_vol_changed(0, float(arg))
+            except ValueError:
+                pass
+            return {"ok": True, "monitor_volume": self.audio.monitor_volume}
+        if cmd == "SET_IP":
+            if arg:
+                self.selected_ip = arg
+                self.settings.preferred_ip = arg
+                self.settings.save()
+            return {"ok": True, "ip": self.selected_ip}
+        if cmd == "REFRESH_IPS":
+            self._refresh_ips_callback()
+            return {
+                "ok": True,
+                "local_ips": self.local_ips,
+                "ip": self.selected_ip,
+            }
+        if cmd == "RECREATE_MIC":
+            self._on_recreate_mic()
+            return {
+                "ok": True,
+                "virtual_mic_ready": self.audio.virtual_mic_ready,
+                "device_label": self.audio.device_label,
+                "backend_name": self.audio.backend_name,
+                "status_message": self.audio.status_message,
+            }
+        if cmd == "TEST_TONE":
+            self._on_test_tone()
+            return {"ok": True}
+        if cmd == "CLEAR_INACTIVE":
+            self.receiver.clear_inactive_devices()
+            devices = self.receiver.get_devices_snapshot()
+            return {"ok": True, "devices": self._serialize_devices(devices)}
+        if cmd == "TOGGLE_BLOCK":
+            if arg:
+                self.receiver.toggle_block_ip(arg)
+            devices = self.receiver.get_devices_snapshot()
+            return {"ok": True, "devices": self._serialize_devices(devices)}
+
         # Default: STATUS
         devices = self.receiver.get_devices_snapshot()
         return {
             "ok": True,
             "ip": self.selected_ip,
+            "local_ips": self.local_ips,
             "udp_port": self.udp_port,
             "gui_active": self.gui_active,
+            "should_close": self._hide_requested or self._quit_requested,
+            "keep_in_background": self.keep_in_background,
             "virtual_mic_ready": self.audio.virtual_mic_ready,
             "device_label": self.audio.device_label,
+            "backend_name": self.audio.backend_name,
+            "status_message": self.audio.status_message,
             "monitor_enabled": self.audio.monitor_enabled,
             "mic_muted": self.audio.mic_muted,
+            "mic_gain": self.audio.mic_gain,
+            "monitor_volume": self.audio.monitor_volume,
+            "current_rms": self.receiver.current_rms,
+            "current_peak": self.receiver.current_peak,
             "total_packets": self.receiver.total_packets,
             "total_bytes": self.receiver.total_bytes,
-            "devices": [
-                {
-                    "address": d.address_str,
-                    "name": d.client_name,
-                    "state": d.session_state,
-                    "active": d.is_active,
-                    "packets": d.packets,
-                    "lost": d.lost_packets,
-                    "bytes": d.bytes_received,
-                }
-                for d in devices
-            ],
+            "devices": self._serialize_devices(devices),
         }
 
     def _refresh_ips_callback(self) -> None:
         self.local_ips = get_local_ips()
-        items = [f"{ip}  [{label}]" for label, ip in self.local_ips]
         self.selected_ip = self.local_ips[0][1] if self.local_ips else "127.0.0.1"
-        if dpg.does_item_exist("ip_combo"):
-            dpg.configure_item(
-                "ip_combo", items=items, default_value=items[0] if items else ""
-            )
-        self._update_connection_banner()
 
     def _on_ip_combo_selected(self, _sender: int, app_data: str) -> None:
         if app_data:
@@ -240,22 +317,6 @@ class VirtualMicApp:
             self.selected_ip = ip
             self.settings.preferred_ip = ip
             self.settings.save()
-            self._update_connection_banner()
-
-    def _update_connection_banner(self) -> None:
-        if dpg.does_item_exist("big_ip_port_text"):
-            dpg.set_value(
-                "big_ip_port_text",
-                f"IP: {self.selected_ip}    |    Puerto UDP: {self.udp_port}",
-            )
-        if dpg.does_item_exist("copy_status_text"):
-            dpg.set_value("copy_status_text", "")
-
-    def _copy_address_callback(self) -> None:
-        target = f"{self.selected_ip}:{self.udp_port}"
-        dpg.set_clipboard_text(target)
-        if dpg.does_item_exist("copy_status_text"):
-            dpg.set_value("copy_status_text", f"Copiado: {target}")
 
     def _on_monitor_toggled(self, _sender: int, app_data: bool) -> None:
         self.audio.set_monitor_enabled(bool(app_data))
@@ -284,7 +345,6 @@ class VirtualMicApp:
 
     def _on_recreate_mic(self) -> None:
         self.audio.setup_virtual_mic()
-        self._update_mic_status_ui()
 
     def _on_test_tone(self) -> None:
         self.audio.send_test_tone_udp(port=self.udp_port, duration_sec=1.5)
@@ -292,428 +352,57 @@ class VirtualMicApp:
     def _on_hide_to_background(self) -> None:
         self.keep_in_background = True
         self._hide_requested = True
-        dpg.stop_dearpygui()
+        self._gui_close_event.set()
 
     def _on_quit_completely(self) -> None:
         self._quit_requested = True
-        dpg.stop_dearpygui()
+        self._hide_requested = True
+        self._gui_close_event.set()
 
     def _on_clear_inactive(self) -> None:
         self.receiver.clear_inactive_devices()
-        self._rebuild_devices_table(self.receiver.get_devices_snapshot())
 
     def _on_toggle_block_device(
         self, _sender: int, _app_data: object, user_data: str
     ) -> None:
         self.receiver.toggle_block_ip(user_data)
-        self._rebuild_devices_table(self.receiver.get_devices_snapshot())
-
-    def _update_mic_status_ui(self) -> None:
-        if not dpg.does_item_exist("mic_status_text"):
-            return
-        if self.audio.virtual_mic_ready:
-            dpg.set_value("mic_status_text", f"ACTIVO — {self.audio.device_label}")
-            dpg.configure_item("mic_status_text", color=(80, 230, 130, 255))
-        else:
-            dpg.set_value(
-                "mic_status_text", f"ERROR — {self.audio.status_message}"
-            )
-            dpg.configure_item("mic_status_text", color=(255, 95, 95, 255))
-
-        if dpg.does_item_exist("backend_text"):
-            dpg.set_value("backend_text", f"Backend: {self.audio.backend_name}")
-
-    def _build_ui(self) -> None:
-        ip_items = [f"{ip}  [{label}]" for label, ip in self.local_ips]
-        selected_combo = next(
-            (item for item in ip_items if item.startswith(self.selected_ip + " ")),
-            ip_items[0] if ip_items else "",
-        )
-
-        danger_btn_theme = create_danger_button_theme()
-
-        with dpg.window(tag="primary_window"):
-            # --- 1. CONNECTION CARD FOR MOBILE DEVICE ---
-            with dpg.child_window(height=155, border=True):
-                with dpg.group(horizontal=True):
-                    dpg.add_text(
-                        "CONEXIÓN PARA DISPOSITIVO MÓVIL (TRANSMISOR UDP)",
-                        color=(140, 185, 255, 255),
-                    )
-                    dpg.add_spacer(width=30)
-                    dpg.add_button(
-                        label="Minimizar a 2do Plano",
-                        callback=lambda: self._on_hide_to_background(),
-                    )
-                    quit_btn = dpg.add_button(
-                        label="Apagar y Salir",
-                        callback=lambda: self._on_quit_completely(),
-                    )
-                    dpg.bind_item_theme(quit_btn, danger_btn_theme)
-
-                big_txt = dpg.add_text(
-                    f"IP: {self.selected_ip}    |    Puerto UDP: {self.udp_port}",
-                    tag="big_ip_port_text",
-                    color=(255, 235, 120, 255),
-                )
-                if self._large_font is not None:
-                    dpg.bind_item_font(big_txt, self._large_font)
-
-                dpg.add_text(
-                    "Formato requerido: PCM 16-bit (s16le)  •  48000 Hz  •  Mono (1 canal)  •  Socket UDP",
-                    color=(180, 190, 205, 255),
-                )
-
-                with dpg.group(horizontal=True):
-                    dpg.add_text("Interfaz de red:")
-                    dpg.add_combo(
-                        items=ip_items,
-                        default_value=selected_combo,
-                        width=270,
-                        tag="ip_combo",
-                        callback=self._on_ip_combo_selected,
-                    )
-                    dpg.add_button(
-                        label="Copiar IP:Puerto",
-                        callback=lambda: self._copy_address_callback(),
-                    )
-                    dpg.add_button(
-                        label="Actualizar IPs",
-                        callback=lambda: self._refresh_ips_callback(),
-                    )
-                    dpg.add_text(
-                        "", tag="copy_status_text", color=(100, 230, 150, 255)
-                    )
-
-            # --- 2. VIRTUAL MICROPHONE & SYSTEM MONITOR CONTROLS ---
-            with dpg.child_window(height=255, border=True):
-                with dpg.group(horizontal=True):
-                    dpg.add_text(
-                        "MICRÓFONO VIRTUAL Y MONITOREO DE AUDIO",
-                        color=(140, 185, 255, 255),
-                    )
-                    dpg.add_spacer(width=20)
-                    dpg.add_text("", tag="backend_text", color=(170, 175, 190, 255))
-
-                with dpg.group(horizontal=True):
-                    dpg.add_text("Estado del Micrófono:")
-                    dpg.add_text("Iniciando...", tag="mic_status_text")
-
-                dpg.add_separator()
-
-                with dpg.group(horizontal=True):
-                    dpg.add_checkbox(
-                        label="Escuchar micrófono por el output de audio del sistema (Monitor)",
-                        default_value=self.audio.monitor_enabled,
-                        tag="monitor_checkbox",
-                        callback=self._on_monitor_toggled,
-                    )
-                    dpg.add_spacer(width=20)
-                    dpg.add_checkbox(
-                        label="Silenciar micrófono virtual (Mute)",
-                        default_value=self.audio.mic_muted,
-                        tag="mute_checkbox",
-                        callback=self._on_mute_toggled,
-                    )
-
-                dpg.add_checkbox(
-                    label="Mantener activo en segundo plano al cerrar la ventana (ahorro de GPU/CPU)",
-                    default_value=self.keep_in_background,
-                    tag="bg_checkbox",
-                    callback=self._on_bg_toggled,
-                )
-
-                with dpg.group(horizontal=True):
-                    dpg.add_slider_float(
-                        label="Ganancia Mic (%)",
-                        default_value=self.audio.mic_gain * 100.0,
-                        min_value=0.0,
-                        max_value=250.0,
-                        format="%.0f%%",
-                        width=220,
-                        callback=self._on_mic_gain_changed,
-                    )
-                    dpg.add_spacer(width=20)
-                    dpg.add_slider_float(
-                        label="Volumen Monitor (%)",
-                        default_value=self.audio.monitor_volume * 100.0,
-                        min_value=0.0,
-                        max_value=200.0,
-                        format="%.0f%%",
-                        width=220,
-                        callback=self._on_monitor_vol_changed,
-                    )
-
-                with dpg.group(horizontal=True):
-                    dpg.add_text("Nivel de Entrada:")
-                    dpg.add_progress_bar(
-                        default_value=0.0,
-                        width=320,
-                        overlay="-inf dB",
-                        tag="vu_meter_bar",
-                    )
-                    dpg.add_simple_plot(
-                        default_value=list(self.level_history),
-                        width=180,
-                        height=24,
-                        min_scale=0.0,
-                        max_scale=1.0,
-                        tag="vu_history_plot",
-                    )
-                    dpg.add_button(
-                        label="Probar Tono UDP",
-                        callback=lambda: self._on_test_tone(),
-                    )
-                    dpg.add_button(
-                        label="Reiniciar Mic",
-                        callback=lambda: self._on_recreate_mic(),
-                    )
-
-            # --- 3. CONNECTED DEVICES TABLE ---
-            with dpg.child_window(border=True):
-                with dpg.group(horizontal=True):
-                    dpg.add_text(
-                        "DISPOSITIVOS CONECTADOS (CLIENTES UDP)",
-                        color=(140, 185, 255, 255),
-                    )
-                    dpg.add_spacer(width=20)
-                    dpg.add_text(
-                        "Total: 0 paquetes (0 B)",
-                        tag="total_traffic_text",
-                        color=(180, 190, 205, 255),
-                    )
-                    dpg.add_spacer(width=20)
-                    dpg.add_button(
-                        label="Limpiar Inactivos",
-                        callback=lambda: self._on_clear_inactive(),
-                    )
-
-                with dpg.table(
-                    tag="devices_table",
-                    header_row=True,
-                    borders_innerH=True,
-                    borders_outerH=True,
-                    borders_innerV=True,
-                    borders_outerV=True,
-                    row_background=True,
-                    resizable=True,
-                ):
-                    dpg.add_table_column(
-                        label="Dispositivo (IP:Puerto)",
-                        width_stretch=True,
-                        init_width_or_weight=1.4,
-                    )
-                    dpg.add_table_column(
-                        label="Estado", width_stretch=True, init_width_or_weight=1.0
-                    )
-                    dpg.add_table_column(
-                        label="Nivel Audio",
-                        width_stretch=True,
-                        init_width_or_weight=1.1,
-                    )
-                    dpg.add_table_column(
-                        label="Velocidad", width_stretch=True, init_width_or_weight=1.2
-                    )
-                    dpg.add_table_column(
-                        label="Datos Recibidos",
-                        width_stretch=True,
-                        init_width_or_weight=1.3,
-                    )
-                    dpg.add_table_column(
-                        label="Última Señal",
-                        width_stretch=True,
-                        init_width_or_weight=0.9,
-                    )
-                    dpg.add_table_column(
-                        label="Acción", width_fixed=True, init_width_or_weight=95
-                    )
-
-        self._update_mic_status_ui()
-        self._rebuild_devices_table(self.receiver.get_devices_snapshot())
-
-    def _rebuild_devices_table(self, devices: list[DeviceInfo]) -> None:
-        if not dpg.does_item_exist("devices_table"):
-            return
-
-        children = dpg.get_item_children("devices_table", 1) or []
-        for child in children:
-            dpg.delete_item(child)
-
-        self._known_table_ips = [d.ip for d in devices]
-
-        if not devices:
-            with dpg.table_row(parent="devices_table"):
-                dpg.add_text(
-                    f"Esperando paquetes UDP en puerto {self.udp_port}...",
-                    color=(140, 145, 160, 255),
-                )
-                dpg.add_text("-")
-                dpg.add_text("-")
-                dpg.add_text("-")
-                dpg.add_text("-")
-                dpg.add_text("-")
-                dpg.add_text("-")
-            return
-
-        now = time.time()
-        for dev in devices:
-            ip_tag = dev.ip.replace(".", "_")
-            with dpg.table_row(parent="devices_table"):
-                dpg.add_text(dev.display_name, tag=f"dev_addr_{ip_tag}")
-                status_str, status_color = self._device_status_label(dev)
-                dpg.add_text(status_str, tag=f"dev_status_{ip_tag}", color=status_color)
-                dpg.add_progress_bar(
-                    default_value=min(1.0, dev.peak_level),
-                    width=-1,
-                    overlay=f"{int(dev.peak_level * 100)}%",
-                    tag=f"dev_level_{ip_tag}",
-                )
-                dpg.add_text(
-                    f"{dev.kbps:.0f} kbps ({dev.pps:.0f} pkt/s)",
-                    tag=f"dev_rate_{ip_tag}",
-                )
-                loss_str = f", {dev.lost_packets} perd" if dev.lost_packets > 0 else ""
-                dpg.add_text(
-                    f"{format_bytes(dev.bytes_received)} ({dev.packets} pkts{loss_str})",
-                    tag=f"dev_bytes_{ip_tag}",
-                )
-                ago = max(0.0, now - dev.last_seen)
-                dpg.add_text(f"hace {ago:.1f}s", tag=f"dev_ago_{ip_tag}")
-                btn_label = "Permitir" if dev.blocked else "Bloquear"
-                dpg.add_button(
-                    label=btn_label,
-                    tag=f"dev_btn_{ip_tag}",
-                    user_data=dev.ip,
-                    callback=self._on_toggle_block_device,
-                )
-
-    @staticmethod
-    def _device_status_label(dev: DeviceInfo) -> tuple[str, tuple[int, int, int, int]]:
-        if dev.blocked:
-            return "BLOQUEADO", (255, 95, 95, 255)
-        if dev.session_state == "DESCONECTADO":
-            return "DESCONECTADO", (160, 165, 175, 255)
-        if dev.is_active:
-            if dev.packets > 0:
-                return "TRANSMITIENDO", (80, 235, 135, 255)
-            return "ENLAZADO", (100, 200, 255, 255)
-        return "INACTIVO", (160, 165, 175, 255)
-
-    def _update_frame(self) -> None:
-        devices = self.receiver.get_devices_snapshot()
-
-        # Keep checkboxes in sync with changes made from the tray icon / CLI
-        if (
-            dpg.does_item_exist("monitor_checkbox")
-            and dpg.get_value("monitor_checkbox") != self.audio.monitor_enabled
-        ):
-            dpg.set_value("monitor_checkbox", self.audio.monitor_enabled)
-        if (
-            dpg.does_item_exist("mute_checkbox")
-            and dpg.get_value("mute_checkbox") != self.audio.mic_muted
-        ):
-            dpg.set_value("mute_checkbox", self.audio.mic_muted)
-
-        peak = self.receiver.current_peak
-        rms = self.receiver.current_rms
-        display_level = min(1.0, max(peak, rms * 1.4))
-        self.level_history.append(display_level)
-
-        if dpg.does_item_exist("vu_meter_bar"):
-            if rms > 1e-4:
-                db = 20.0 * math.log10(rms)
-                overlay = f"{db:.1f} dBFS ({int(display_level * 100)}%)"
-            else:
-                overlay = "-inf dBFS (0%)"
-            dpg.set_value("vu_meter_bar", display_level)
-            dpg.configure_item("vu_meter_bar", overlay=overlay)
-
-        if dpg.does_item_exist("vu_history_plot"):
-            dpg.set_value("vu_history_plot", list(self.level_history))
-
-        if dpg.does_item_exist("total_traffic_text"):
-            dpg.set_value(
-                "total_traffic_text",
-                f"Total: {self.receiver.total_packets} paquetes ({format_bytes(self.receiver.total_bytes)})",
-            )
-
-        current_ips = [d.ip for d in devices]
-        if current_ips != self._known_table_ips:
-            self._rebuild_devices_table(devices)
-        else:
-            now = time.time()
-            for dev in devices:
-                ip_tag = dev.ip.replace(".", "_")
-                if dpg.does_item_exist(f"dev_addr_{ip_tag}"):
-                    dpg.set_value(f"dev_addr_{ip_tag}", dev.display_name)
-                if dpg.does_item_exist(f"dev_status_{ip_tag}"):
-                    status_str, status_color = self._device_status_label(dev)
-                    dpg.set_value(f"dev_status_{ip_tag}", status_str)
-                    dpg.configure_item(f"dev_status_{ip_tag}", color=status_color)
-                if dpg.does_item_exist(f"dev_level_{ip_tag}"):
-                    lvl = min(1.0, dev.peak_level)
-                    dpg.set_value(f"dev_level_{ip_tag}", lvl)
-                    dpg.configure_item(
-                        f"dev_level_{ip_tag}", overlay=f"{int(lvl * 100)}%"
-                    )
-                if dpg.does_item_exist(f"dev_rate_{ip_tag}"):
-                    dpg.set_value(
-                        f"dev_rate_{ip_tag}",
-                        f"{dev.kbps:.0f} kbps ({dev.pps:.0f} pkt/s)",
-                    )
-                if dpg.does_item_exist(f"dev_bytes_{ip_tag}"):
-                    loss_str = f", {dev.lost_packets} perd" if dev.lost_packets > 0 else ""
-                    dpg.set_value(
-                        f"dev_bytes_{ip_tag}",
-                        f"{format_bytes(dev.bytes_received)} ({dev.packets} pkts{loss_str})",
-                    )
-                if dpg.does_item_exist(f"dev_ago_{ip_tag}"):
-                    ago = max(0.0, now - dev.last_seen)
-                    dpg.set_value(f"dev_ago_{ip_tag}", f"hace {ago:.1f}s")
 
     def _run_gui_session(self) -> None:
         """
-        Opens the Dear PyGui window and runs the render loop until the user closes it.
-        When closed, completely destroys the OpenGL/DearPyGui context and terminates GLFW
-        to close the native OS window and free GPU/CPU.
+        Spawns an isolated child process via the platform orchestrator to host the Dear PyGui
+        viewport. When the user closes the window (or HIDE/STOP is requested), the child process
+        exits completely, returning 100% of GPU driver, OpenGL/DirectX, GLFW/Win32, and UI heap
+        memory to the operating system without polluting the background daemon process.
         """
+        self._start_ipc_server()
         self.gui_active = True
         self._hide_requested = False
+        self._gui_close_event.clear()
         self.receiver.compute_levels = True
 
-        dpg.create_context()
+        proc: subprocess.Popen[bytes] | None = None
         try:
-            self._large_font = setup_theme_and_fonts()
-            self._build_ui()
+            proc = self.orchestrator.spawn_gui_process(self.control_port)
+            self._gui_proc = proc
 
-            dpg.create_viewport(
-                title="BindCurse — Receptor de Micrófono UDP (48kHz 16-bit Mono)",
-                width=940,
-                height=675,
-                min_width=780,
-                min_height=540,
-            )
-            dpg.setup_dearpygui()
-            dpg.show_viewport()
-            dpg.set_primary_window("primary_window", True)
-
-            last_ui_update = 0.0
-            while (
-                dpg.is_dearpygui_running()
+            while proc.poll() is None:
+                if self._quit_requested or self._hide_requested:
+                    self._terminate_gui_process(graceful_timeout=1.2)
+                    break
+                self._gui_close_event.wait(timeout=0.05)
+        finally:
+            exit_code = proc.poll() if proc is not None else None
+            if (
+                exit_code is not None
+                and exit_code != 0
                 and not self._quit_requested
                 and not self._hide_requested
             ):
-                now = time.time()
-                if now - last_ui_update >= 0.05:
-                    self._update_frame()
-                    last_ui_update = now
-                dpg.render_dearpygui_frame()
-        finally:
-            try:
-                dpg.destroy_context()
-            except Exception:
-                pass
-            terminate_dpg_glfw()
+                print(
+                    f"[{APP_NAME}] Ventana gráfica cerrada inesperadamente (código {exit_code})"
+                )
+            self._terminate_gui_process()
+            self._gui_proc = None
             self.gui_active = False
             self.receiver.compute_levels = False
             gc.collect()

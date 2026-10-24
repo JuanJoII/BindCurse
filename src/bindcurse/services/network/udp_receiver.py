@@ -1,27 +1,25 @@
 from __future__ import annotations
 
+import array
+import math
 import platform
 import socket
 import struct
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import Callable, List, Tuple
 
-import numpy as np
-
-from bindcurse.config import (
+from bindcurse.core.config import (
     AUDIO_HEADER_SIZE,
     AUDIO_MAGIC,
     DEFAULT_BUFFER_SIZE,
     DEFAULT_UDP_PORT,
-    IS_LINUX,
-    IS_WINDOWS,
-    PCM_DTYPE,
     PROTOCOL_PREFIX,
 )
+from bindcurse.core import get_orchestrator
 from bindcurse.services.network.os_network import (
-    get_linux_ips,
     get_windows_ips,
     probe_primary_ip,
 )
@@ -60,7 +58,9 @@ class DeviceInfo:
 
     @property
     def is_active(self) -> bool:
-        return (time.time() - self.last_seen) < 2.5 and self.session_state != "DESCONECTADO"
+        return (
+            time.time() - self.last_seen
+        ) < 2.5 and self.session_state != "DESCONECTADO"
 
 
 def get_local_ips() -> List[Tuple[str, str]]:
@@ -72,11 +72,7 @@ def get_local_ips() -> List[Tuple[str, str]]:
     seen_ips: set[str] = set()
 
     primary_ip = probe_primary_ip()
-
-    if IS_LINUX:
-        results.extend(get_linux_ips(primary_ip))
-    elif IS_WINDOWS:
-        results.extend(get_windows_ips(primary_ip))
+    results.extend(get_orchestrator().get_local_ips(primary_ip))
 
     for _, ip in results:
         seen_ips.add(ip)
@@ -149,7 +145,9 @@ class UDPAudioReceiver:
             except OSError:
                 pass
             try:
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, DEFAULT_BUFFER_SIZE)
+                sock.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_RCVBUF, DEFAULT_BUFFER_SIZE
+                )
             except OSError:
                 pass
             sock.bind(("0.0.0.0", self.port))
@@ -346,11 +344,16 @@ class UDPAudioReceiver:
             rms = 0.0
             peak = 0.0
             if self.compute_levels:
-                samples = np.frombuffer(raw_pcm, dtype=PCM_DTYPE)
-                if samples.size > 0:
-                    float_samples = samples.astype(np.float32) * (1.0 / 32768.0)
-                    rms = float(np.sqrt(np.mean(float_samples * float_samples)))
-                    peak = float(np.max(np.abs(float_samples)))
+                samples = array.array("h")
+                samples.frombytes(raw_pcm)
+                if sys.byteorder != "little":
+                    samples.byteswap()
+                n = len(samples)
+                if n > 0:
+                    max_abs = max(abs(max(samples)), abs(min(samples)))
+                    peak = max_abs / 32768.0
+                    sum_sq = sum(s * s for s in samples)
+                    rms = math.sqrt(sum_sq / n) / 32768.0
 
             with self._lock:
                 dev = self._devices.get(ip)

@@ -3,12 +3,19 @@ from __future__ import annotations
 import argparse
 import os
 import signal
-import subprocess
-import sys
+from typing import Any
 
-from bindcurse.config import APP_NAME, DEFAULT_UDP_PORT, IS_WINDOWS, UserSettings
-from bindcurse.gui import VirtualMicApp
-from bindcurse.services import send_ipc_command
+from bindcurse.core.config import APP_NAME, DEFAULT_UDP_PORT, UserSettings
+from bindcurse.core import get_orchestrator
+from bindcurse.services.network.ipc import send_ipc_command
+
+
+def __getattr__(name: str) -> Any:
+    if name == "VirtualMicApp":
+        from bindcurse.gui.app import VirtualMicApp
+
+        return VirtualMicApp
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _print_status(resp: dict[str, object]) -> None:
@@ -31,10 +38,18 @@ def _print_status(resp: dict[str, object]) -> None:
         print("  Dispositivos:")
         for d in devices:
             if isinstance(d, dict):
-                estado = d.get("state") or ("TRANSMITIENDO" if d.get("active") else "INACTIVO")
-                name_str = f" [{d.get('name')}]" if d.get("name") and d.get("name") not in ("Dispositivo", "Cliente") else ""
+                estado = d.get("state") or (
+                    "TRANSMITIENDO" if d.get("active") else "INACTIVO"
+                )
+                name_str = (
+                    f" [{d.get('name')}]"
+                    if d.get("name") and d.get("name") not in ("Dispositivo", "Cliente")
+                    else ""
+                )
                 lost_str = f", {d.get('lost')} perdidos" if d.get("lost") else ""
-                print(f"    - {d.get('address')}{name_str} [{estado}] ({d.get('packets')} pkts{lost_str})")
+                print(
+                    f"    - {d.get('address')}{name_str} [{estado}] ({d.get('packets')} pkts{lost_str})"
+                )
     else:
         print("  Dispositivos      : Ninguno conectado aún")
 
@@ -95,9 +110,6 @@ def main() -> None:
 
     settings = UserSettings.load()
     port = args.port if args.port is not None else settings.udp_port
-    if args.port is not None and args.port != settings.udp_port:
-        settings.udp_port = args.port
-        settings.save()
     control_port = port + 1
 
     # Check if an instance is already running
@@ -158,35 +170,7 @@ def main() -> None:
     # By default, spawn detached session so closing the terminal
     # or closing the GUI window leaves the background service running cleanly.
     if not args.foreground:
-        cmd = [
-            sys.executable,
-            "-m",
-            "bindcurse",
-            "--foreground",
-            "--port",
-            str(port),
-        ]
-        if args.background:
-            cmd.append("--background")
-        popen_kwargs: dict[str, object] = {}
-        if IS_WINDOWS:
-            pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-            if os.path.isfile(pythonw):
-                cmd[0] = pythonw
-            popen_kwargs["creationflags"] = (
-                subprocess.DETACHED_PROCESS
-                | subprocess.CREATE_NEW_PROCESS_GROUP
-            )
-        else:
-            popen_kwargs["start_new_session"] = True
-        subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-            **popen_kwargs,
-        )
+        get_orchestrator().spawn_detached_daemon(port=port, background=args.background)
         mode_msg = "en segundo plano" if args.background else "con ventana gráfica"
         print(
             f"{APP_NAME} iniciado ({mode_msg}, UDP :{port}).\n"
@@ -195,6 +179,8 @@ def main() -> None:
             "  • Ejecuta 'uv run bindcurse --stop' (o el botón 'Apagar y Salir') para cerrarlo del todo."
         )
         return
+
+    from bindcurse.gui.app import VirtualMicApp
 
     app = VirtualMicApp(udp_port=port)
 
