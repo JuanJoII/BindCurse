@@ -5,6 +5,19 @@ from typing import Any
 from bindcurse.core.config import CHANNELS, SAMPLE_RATE
 
 
+def _mono_to_stereo_s16le(pcm_bytes: bytes) -> bytes:
+    """Duplicates 16-bit mono PCM samples to 2-channel stereo for Windows audio endpoints."""
+    valid_len = len(pcm_bytes) & ~1
+    if valid_len <= 0:
+        return b""
+    stereo = bytearray(valid_len * 2)
+    stereo[0::4] = pcm_bytes[0::2]
+    stereo[1::4] = pcm_bytes[1::2]
+    stereo[2::4] = pcm_bytes[0::2]
+    stereo[3::4] = pcm_bytes[1::2]
+    return bytes(stereo)
+
+
 class WindowsAudioBackend:
     """Manages virtual mic via VB-Cable and monitoring via PortAudio/sounddevice."""
 
@@ -15,15 +28,16 @@ class WindowsAudioBackend:
         self.channels = channels
         self.sd_mic_stream: Any = None
         self.sd_monitor_stream: Any = None
+        self._mic_channels: int = channels
         self._monitor_channels: int = channels
         self._monitor_failed: bool = False
 
     @staticmethod
     def _hostapi_priority(api_name: str) -> int:
         lower = api_name.lower()
-        if "mme" in lower:
-            return 0
         if "wasapi" in lower:
+            return 0
+        if "mme" in lower:
             return 1
         if "directsound" in lower:
             return 2
@@ -32,8 +46,8 @@ class WindowsAudioBackend:
     def setup(self) -> tuple[bool, str, str]:
         """
         Finds VB-Cable input device and opens a RawOutputStream.
-        Prioritizes 'CABLE Input' over 'CABLE In 16ch' and prioritizes MME because
-        VB-Audio Virtual Cable's virtual loopback bridge functions on Windows MME/WDM.
+        Prioritizes 'CABLE Input' over 'CABLE In 16ch' and prefers modern Windows WASAPI
+        (ultra-low 22ms latency at native 48kHz stereo) with graceful fallback to MME.
         Returns (success, device_label, status_message).
         """
         try:
@@ -78,19 +92,26 @@ class WindowsAudioBackend:
             candidates.sort(key=lambda item: (item[0], item[1], item[2]))
             last_exc: Exception | None = None
             for _, _, cable_index, cable_name in candidates:
-                try:
-                    stream = sd.RawOutputStream(
-                        samplerate=self.sample_rate,
-                        channels=self.channels,
-                        dtype="int16",
-                        device=cable_index,
-                        latency="low",
-                    )
-                    stream.start()
-                    self.sd_mic_stream = stream
-                    return True, cable_name, f"Conectado a VB-Cable: {cable_name}"
-                except Exception as exc:
-                    last_exc = exc
+                dev_info = devices[cable_index]
+                max_out = int(dev_info.get("max_output_channels", 0))
+                channels_to_try = (
+                    [2, self.channels] if max_out >= 2 else [self.channels]
+                )
+                for try_ch in channels_to_try:
+                    try:
+                        stream = sd.RawOutputStream(
+                            samplerate=self.sample_rate,
+                            channels=try_ch,
+                            dtype="int16",
+                            device=cable_index,
+                            latency="low",
+                        )
+                        stream.start()
+                        self.sd_mic_stream = stream
+                        self._mic_channels = try_ch
+                        return True, cable_name, f"Conectado a VB-Cable: {cable_name}"
+                    except Exception as exc:
+                        last_exc = exc
 
             return False, "Error", f"Error abriendo VB-Cable: {last_exc}"
         except Exception as exc:
@@ -102,7 +123,10 @@ class WindowsAudioBackend:
             try:
                 if stream.stopped:
                     stream.start()
-                stream.write(mic_bytes)
+                if self._mic_channels == 2 and self.channels == 1:
+                    stream.write(_mono_to_stereo_s16le(mic_bytes))
+                else:
+                    stream.write(mic_bytes)
             except Exception:
                 pass
 
@@ -169,12 +193,7 @@ class WindowsAudioBackend:
                 if stream.stopped:
                     stream.start()
                 if self._monitor_channels == 2 and self.channels == 1:
-                    stereo_bytes = bytearray(len(monitor_bytes) * 2)
-                    stereo_bytes[0::4] = monitor_bytes[0::2]
-                    stereo_bytes[1::4] = monitor_bytes[1::2]
-                    stereo_bytes[2::4] = monitor_bytes[0::2]
-                    stereo_bytes[3::4] = monitor_bytes[1::2]
-                    stream.write(stereo_bytes)
+                    stream.write(_mono_to_stereo_s16le(monitor_bytes))
                 else:
                     stream.write(monitor_bytes)
             except Exception:
