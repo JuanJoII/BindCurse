@@ -15,14 +15,11 @@ Características:
 """
 
 import argparse
-import os
 import platform
 import socket
 import struct
 import sys
-import time
 import wave
-from datetime import datetime
 
 # Protocol definitions
 BINDCURSE_VERSION = 1
@@ -161,10 +158,10 @@ def main():
     print("=" * 65)
     print("   ⛧ BINDCURSE UDP AUDIO RECEIVER / ALTAR PRINCIPAL ⛧")
     print("=" * 65)
-    print(f" Estado:       ESCUCHANDO")
+    print(" Estado:       ESCUCHANDO")
     print(f" Host:         {host_name} ({os_name})")
     print(f" Puerto UDP:   {args.port}")
-    print(f" Audio:        PCM 16-bit 48000Hz Mono")
+    print(" Audio:        PCM 16-bit 48000Hz Mono")
     print("=" * 65)
     print("Esperando enlace de la app BindCurse...\n")
 
@@ -173,7 +170,6 @@ def main():
     total_packets = 0
     lost_packets = 0
     total_bytes = 0
-    start_time = None
 
     try:
         while True:
@@ -204,14 +200,13 @@ def main():
                         total_packets = 0
                         lost_packets = 0
                         total_bytes = 0
-                        start_time = time.time()
                         resp = f"BINDCURSE_ACK|{host_name}|{os_name}"
                         sock.sendto(resp.encode("utf-8"), addr)
                         print(
                             f"\n[PACTO SELLADO] Nuevo enlace con {client_name} en {addr[0]}:{addr[1]}"
                         )
                         print(
-                            f"[AUDIO STREAM] Esperando flujo de audio PCM 16-bit 48kHz..."
+                            "[AUDIO STREAM] Esperando flujo de audio PCM 16-bit 48kHz..."
                         )
 
                     # 3. Ping: BINDCURSE_PING|<seq>

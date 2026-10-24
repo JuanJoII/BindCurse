@@ -42,7 +42,9 @@ class WindowsAudioBackend:
 
             def _api_rank(hostapi_idx: int) -> int:
                 try:
-                    return self._hostapi_priority(str(hostapis[hostapi_idx].get("name", "")))
+                    return self._hostapi_priority(
+                        str(hostapis[hostapi_idx].get("name", ""))
+                    )
                 except Exception:
                     return 3
 
@@ -110,7 +112,9 @@ class WindowsAudioBackend:
                 hostapis = sd.query_hostapis()
                 ranked_apis = sorted(
                     enumerate(hostapis),
-                    key=lambda item: self._hostapi_priority(str(item[1].get("name", ""))),
+                    key=lambda item: self._hostapi_priority(
+                        str(item[1].get("name", ""))
+                    ),
                 )
                 for _, api_info in ranked_apis:
                     default_out = int(api_info.get("default_output_device", -1))

@@ -231,7 +231,10 @@ class LinuxAudioBackend:
                     self.monitor_pacat.stdin.write(monitor_bytes)
                 except BrokenPipeError:
                     self.start_monitor_pacat()
-                    if self.monitor_pacat is not None and self.monitor_pacat.stdin is not None:
+                    if (
+                        self.monitor_pacat is not None
+                        and self.monitor_pacat.stdin is not None
+                    ):
                         try:
                             self.monitor_pacat.stdin.write(monitor_bytes)
                         except Exception:

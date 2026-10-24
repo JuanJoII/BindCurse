@@ -299,9 +299,7 @@ class WindowsOrchestrator(PlatformOrchestrator):
 
     def spawn_gui_process(self, control_port: int) -> subprocess.Popen[bytes]:
         gui_exe, is_pythonw = self._resolve_pythonw()
-        creationflags = (
-            0 if is_pythonw else getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        )
+        creationflags = 0 if is_pythonw else getattr(subprocess, "CREATE_NO_WINDOW", 0)
         # Always redirect stdin, stdout, and stderr to DEVNULL on Windows so
         # subprocess._get_handles never attempts DuplicateHandle on invalid
         # parent handles when running inside a detached pythonw.exe daemon.
@@ -348,9 +346,7 @@ class WindowsOrchestrator(PlatformOrchestrator):
 
     def find_system_font(self, bold: bool = False) -> str | None:
         win_dir = (
-            os.environ.get("SystemRoot")
-            or os.environ.get("windir")
-            or "C:/Windows"
+            os.environ.get("SystemRoot") or os.environ.get("windir") or "C:/Windows"
         )
         win_fonts = os.path.join(win_dir, "Fonts")
         candidates = (
@@ -492,9 +488,7 @@ class WindowsOrchestrator(PlatformOrchestrator):
         if windows_backend is None:
             return False, "No inicializado", "-", "Backend Windows no disponible"
         ok, label, msg = windows_backend.setup()
-        backend_name = (
-            "VB-Audio Virtual Cable" if ok else "VB-Cable (No detectado)"
-        )
+        backend_name = "VB-Audio Virtual Cable" if ok else "VB-Cable (No detectado)"
         return ok, backend_name, label, msg
 
     def get_matching_windows(self, title_substr: str) -> list[str]:

@@ -173,9 +173,7 @@ def main() -> None:
     # By default, spawn detached session so closing the terminal
     # or closing the GUI window leaves the background service running cleanly.
     if not args.foreground:
-        get_orchestrator().spawn_detached_daemon(
-            port=port, background=args.background
-        )
+        get_orchestrator().spawn_detached_daemon(port=port, background=args.background)
         mode_msg = "en segundo plano" if args.background else "con ventana gráfica"
         print(
             f"{APP_NAME} iniciado ({mode_msg}, UDP :{port}).\n"

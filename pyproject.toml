@@ -22,3 +22,6 @@ bindcurse = "bindcurse:main"
 [build-system]
 requires = ["uv_build>=0.12.23,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.ruff.lint.per-file-ignores]
+"src/bindcurse/services/tray/linux_tray.py" = ["F722", "F821"]
