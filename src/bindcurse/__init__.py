@@ -110,9 +110,6 @@ def main() -> None:
 
     settings = UserSettings.load()
     port = args.port if args.port is not None else settings.udp_port
-    if args.port is not None and args.port != settings.udp_port:
-        settings.udp_port = args.port
-        settings.save()
     control_port = port + 1
 
     # Check if an instance is already running
